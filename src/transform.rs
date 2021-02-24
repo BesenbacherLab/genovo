@@ -49,6 +49,9 @@ pub fn transform_gff3_annotations(
         match row.seq_type.as_str() {
             "transcript" => {
                 if current_entity_name != "" {
+                    current_cdss.sort();
+                    current_exons.sort();
+
                     // if we have a previous transcript (or the transcript that we filter_for_id
                     let anno = SeqAnnotation::new(
                         current_entity_name.clone(),
@@ -110,6 +113,8 @@ pub fn transform_gff3_annotations(
         }
     }
     // finish off the last entry
+    current_cdss.sort();
+    current_exons.sort();
     if current_entity_name != "" {
         //if we have a previous transcript
         if let Some(id) = filter_for_id {
