@@ -1,6 +1,6 @@
 [package]
 name = "genovo"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Jörn Bethune <joern@localhost>"]
 repository = "https://github.com/jbethune/kmerPaPa/"
 edition = "2018"
@@ -13,7 +13,7 @@ description = "Determine genes with significantly more mutations than expected b
 
 [dependencies]
 clap = "^2.33"
-mutexpect = { version = "0.2.5", path = "../mutexpect/" }
+mutexpect = { version = "0.2.6", path = "../mutexpect/" }
 twobit = { version = "0.1", path = "../rust-twobit/" }
 pattern_partition_prediction = { version = "0.1.3", path = "../pattern_partition_prediction/" }
 tabfile = "0.2"
