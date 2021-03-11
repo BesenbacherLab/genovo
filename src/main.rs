@@ -125,6 +125,12 @@ fn main() -> Result<()> {
         .arg(Arg::with_name("sum-up-observed-mutations-per-transcript")
              .long("--sum-up-observed-mutations-per-transcript")
              .help("Tally up the number of observed mutations instead of displaying them in detail (can be used in combination with --action classify and --classified-mutations <output-file>)"))
+        .arg(Arg::with_name("include-intronic")
+             .long("--include-intronic")
+             .help("Also enumerate intronic variants. Default is to not enumerate intronic variants."))
+        .arg(Arg::with_name("include-unknown")
+             .long("--include-unknown")
+             .help("Also enumerate variants with unknown type (primarily UTR). Default is to not enumerate variants with unknown type."))
         .arg(Arg::with_name("number-of-random-samples")
              .long("--number-of-random-samples")
              .value_name("NUMBER")
@@ -140,7 +146,9 @@ fn main() -> Result<()> {
         .value_of("scaling-factor")
         .expect("default value")
         .parse()?;
-
+    let include_intronic = matches.occurrences_of("include-intronic") > 0;
+    let include_unknown = matches.occurrences_of("include-unknown") > 0;
+    
     /*
      * Depending on what --action is given, each step may or may not produce results.
      * Therefore the variables are all Option's.
@@ -188,6 +196,7 @@ fn main() -> Result<()> {
         }
     };
 
+    //println!("transform")
     // action=transform
     let regions = {
         if run_all || matches.value_of("action") == Some("transform") {
@@ -214,6 +223,7 @@ fn main() -> Result<()> {
         }
     };
 
+    //println!("enumerate")
     //action=enumerate
     let possible_mutations = {
         if run_all || matches.value_of("action") == Some("enumerate") {
@@ -225,6 +235,8 @@ fn main() -> Result<()> {
                 scaling_factor,
                 true,
                 id,
+                include_intronic,
+                include_unknown,
             )?;
 
             if let Some(possible_mutations_file) = matches.value_of("possible-mutations") {
@@ -242,6 +254,8 @@ fn main() -> Result<()> {
         }
     };
 
+    //println!("expect")
+    //action=expect
     let expected_mutations = {
         if run_all || matches.value_of("action") == Some("expect") {
             let expected_mutations = expected_number_of_mutations(
@@ -263,6 +277,8 @@ fn main() -> Result<()> {
         }
     };
 
+    //println!("sample")
+    //action=sample
     let sampled_mutations = {
         if run_all || matches.value_of("action") == Some("sample") {
             let iterations: usize = matches
@@ -273,7 +289,6 @@ fn main() -> Result<()> {
             let sampled_mutations = sample_mutations(
                 require_initialization(&possible_mutations, "--possible-mutations")?,
                 iterations,
-                true,
                 id,
             )?;
 
@@ -294,6 +309,8 @@ fn main() -> Result<()> {
 
     std::mem::drop(possible_mutations); // let's free up some memory
 
+    //println!("classify")
+    //action=classify
     let classified_mutations = {
         if run_all || matches.value_of("action") == Some("classify") {
             let classified_mutations = classify_mutations(
@@ -328,6 +345,8 @@ fn main() -> Result<()> {
         }
     };
 
+    //println!("compare")
+    //action=compare
     let _significant_mutations = {
         if run_all || matches.value_of("action") == Some("compare") {
             let significant_mutations = compare_mutations(

@@ -170,7 +170,9 @@ pub fn classify_mutations(
                 let middle = mutation.position - annotation.range.start + flank;
                 seq_of_region[middle - flank..middle + flank + 1].into()
             };
-            assert_eq!(sequence_context[2], mutation.ref_base()); // sanity-check right reference genome
+            assert_eq!(sequence_context[2], mutation.ref_base(), 
+                        "Reference base in mutation file ({}) does not match base in 2bit file ({}). Are you using the right reference genome?",
+                        mutation.ref_base(), sequence_context[2]); // sanity-check right reference genome
 
             let overlapping_intron = annotation.find_intron(mutation.position);
 

@@ -19,7 +19,6 @@ pub type SampledMutations = HashMap<String, HashMap<MutationType, DefaultCounter
 pub fn sample_mutations(
     possible_mutations: &HashMap<String, Vec<MutationEvent>>,
     number_of_samplings: usize,
-    drop_unknown_mutation_type: bool,
     filter_for_id: Option<&str>,
 ) -> Result<SampledMutations> {
     let random = rand::thread_rng();
@@ -36,9 +35,9 @@ pub fn sample_mutations(
         // sort mutations by mutation type
         let mut mutations: HashMap<MutationType, Vec<Probability>> = HashMap::new();
         for event in mutation_events {
-            if drop_unknown_mutation_type && event.mutation_type == MutationType::Unknown {
-                continue; // it makes little sense to sample these
-            }
+            //if drop_unknown_mutation_type && event.mutation_type == MutationType::Unknown {
+            //    continue; // it makes little sense to sample these
+            //} should be handled by not enumeration them
             mutations
                 .entry(event.mutation_type)
                 .or_insert_with(Vec::new)
