@@ -98,7 +98,7 @@ pub fn transform_gff3_annotations(
                     get_attribute(&attributes, "Parent").context("missing Parent attribute")?;
                 if parent != current_entity_name {
                     return Err(anyhow::anyhow!(
-                        "The gff3 file is not an ordered tree structure: Exon {} has parent {}",
+                        "The gff3 file is not an ordered tree structure: CDS {} has parent {}",
                         id,
                         parent
                     ));

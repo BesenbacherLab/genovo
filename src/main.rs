@@ -196,26 +196,26 @@ fn main() -> Result<()> {
         }
     };
 
-    //println!("transform");
+    println!("transform");
     // action=transform
     let regions = {
-        if let Some(regions_file) = matches.value_of("genomic-regions") {
+        if let Some(gff3) = matches.value_of("gff3") {
+            let regions = transform::transform_gff3_annotations(gff3, id)?;
+            if let Some(regions_file) = matches.value_of("genomic-regions") {
+                transform::write_sequence_annotations_to_file(regions_file, &regions)?;
+            }
+            if !run_all {
+                // we are done here
+                return Ok(());
+            }
+            Some(regions)
+        } else if let Some(regions_file) = matches.value_of("genomic-regions") {
             Some(mutexpect::read_sequence_annotations_from_file(
                 regions_file,
                 id,
             )?)
         } else if run_all || matches.value_of("action") == Some("transform") {
-            if let Some(gff3) = matches.value_of("gff3") {
-                let regions = transform::transform_gff3_annotations(gff3, id)?;
-                if let Some(regions_file) = matches.value_of("genomic-regions") {
-                    transform::write_sequence_annotations_to_file(regions_file, &regions)?;
-                }
-                if !run_all {
-                    // we are done here
-                    return Ok(());
-                }
-                Some(regions)
-            } else {
+            {
                 return Err(anyhow::anyhow!("Please provide the --gff3 parameter"));
             }
         } else {
@@ -223,7 +223,7 @@ fn main() -> Result<()> {
         }
     };
 
-    //println!("enumerate");
+    println!("enumerate");
     //action=enumerate
     let possible_mutations = {
         if run_all || matches.value_of("action") == Some("enumerate") {
@@ -254,7 +254,7 @@ fn main() -> Result<()> {
         }
     };
 
-    //println!("expect");
+    println!("expect");
     //action=expect
     let expected_mutations = {
         if run_all || matches.value_of("action") == Some("expect") {
@@ -277,7 +277,7 @@ fn main() -> Result<()> {
         }
     };
 
-    //println!("sample");
+    println!("sample");
     //action=sample
     let sampled_mutations = {
         if run_all || matches.value_of("action") == Some("sample") {
@@ -309,7 +309,7 @@ fn main() -> Result<()> {
 
     std::mem::drop(possible_mutations); // let's free up some memory
 
-    //println!("classify");
+    println!("classify");
     //action=classify
     let classified_mutations = {
         if run_all || matches.value_of("action") == Some("classify") {
@@ -345,7 +345,7 @@ fn main() -> Result<()> {
         }
     };
 
-    //println!("compare");
+    println!("compare");
     //action=compare
     let _significant_mutations = {
         if run_all || matches.value_of("action") == Some("compare") {

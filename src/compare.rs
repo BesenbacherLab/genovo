@@ -36,12 +36,14 @@ pub fn compare_mutations(
                 Some(v) => v,
                 None => {
                     if !expected.eq(&0.0) {
-                        eprintln!("[WARNING] mutation_type={} has no samplings but an expectation value of {} in region {}", mutation_type, expected, region);
+                        eprintln!("[WARNING] mutation_type={} has no sampled values but an expectation value of {} in region {}", mutation_type, expected, region);
                     }
                     continue; // will not add to result
                 }
             };
             let p_value = sampled.p_values().n_hits_or_more(observed);
+            //TODO: add expected_uppper and expected_lower bound for some alpha
+            //should be sampled.p_values().sort() [alpha/2.0] og [-(alpha/2.0)]
             let comparison =
                 ComparedMutations::new(region.clone(), mutation_type, observed, expected, p_value);
             result.push(comparison);
