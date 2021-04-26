@@ -24,6 +24,7 @@ struct GFF3Record {
 pub fn transform_gff3_annotations(
     annotations_file: &str,
     filter_for_id: Option<&str>,
+    required_tags: Option<Vec<&str>>,
 ) -> Result<Vec<SeqAnnotation>> {
     let mut result = Vec::new();
 
@@ -46,12 +47,37 @@ pub fn transform_gff3_annotations(
     for row_result in csv_reader.deserialize() {
         let row: GFF3Record = row_result?;
         let attributes = row.attributes.context("Missing attributes in GFF3 file")?;
+        let transcript_type = get_attribute(&attributes, "transcript_type").context("missing transcript_type attribute")?;
+        let gene_type = get_attribute(&attributes, "gene_type").context("missing gene_type attribute")?;
+        //println!("attributes, {}", attributes);
+        if transcript_type != "protein_coding" || gene_type != "protein_coding" {
+            continue;
+        }
+        if let Some(ref req_tags) = required_tags {
+            if let Some(tag) = get_attribute(&attributes, "tag") {
+                let mut skip = false;
+                let tags: Vec<&str> = tag.split(',').collect();
+                for req_tag in req_tags {
+                    if !tags.contains(&req_tag){
+                        //println!("skip {:#?} {:#?} ", tags, req_tag);
+                        skip = true;
+                        continue
+                    }
+                }
+                if skip {
+                    continue
+                }
+            } else {
+                continue
+            }
+        };
+        //println!("attributes, {}", attributes);
         match row.seq_type.as_str() {
             "transcript" => {
                 if current_entity_name != "" {
                     current_cdss.sort();
                     current_exons.sort();
-
+                    
                     // if we have a previous transcript (or the transcript that we filter_for_id
                     let anno = SeqAnnotation::new(
                         current_entity_name.clone(),
@@ -66,7 +92,10 @@ pub fn transform_gff3_annotations(
                             result.push(anno);
                         }
                     } else {
-                        result.push(anno);
+                        // Ignore genes with no CDS:
+                        if current_cdss.len() != 0 {
+                            result.push(anno);
+                        }
                     }
                 }
                 current_entity_name = get_attribute(&attributes, "ID")

@@ -137,7 +137,14 @@ fn main() -> Result<()> {
              .default_value("1000")
              .help("The number of random samples that should be generated")
              .takes_value(true))
+        .arg(Arg::with_name("required-tag")
+             .long("--required-tag")
+             .value_name("TAG")
+             .help("Exclude entrences from gff file that to no include the tag TAG")
+             .takes_value(true)
+             .multiple(true))
     ;
+
 
     let matches = app.get_matches();
     let run_all = matches.value_of("action").is_none();
@@ -148,6 +155,17 @@ fn main() -> Result<()> {
         .parse()?;
     let include_intronic = matches.occurrences_of("include-intronic") > 0;
     let include_unknown = matches.occurrences_of("include-unknown") > 0;
+  
+    let required_tags: Option<Vec<&str>> = {
+       if let Some(tags) = matches.values_of("required-tag"){
+           Some(tags.collect())
+       } else {
+           None
+       }
+    };
+   
+    //println!("{:#?}", required_tags);
+    
     
     /*
      * Depending on what --action is given, each step may or may not produce results.
@@ -200,7 +218,7 @@ fn main() -> Result<()> {
     // action=transform
     let regions = {
         if let Some(gff3) = matches.value_of("gff3") {
-            let regions = transform::transform_gff3_annotations(gff3, id)?;
+            let regions = transform::transform_gff3_annotations(gff3, id, required_tags)?;
             if let Some(regions_file) = matches.value_of("genomic-regions") {
                 transform::write_sequence_annotations_to_file(regions_file, &regions)?;
             }
