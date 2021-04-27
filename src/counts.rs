@@ -112,7 +112,7 @@ impl DefaultCounter {
         self.values[index] += 1
     }
 
-    pub fn to_long(&mut self) -> Vec<usize> {
+    pub fn to_long(&self) -> Vec<usize> {
         let mut result = Vec::new();
         for i in 0..self.values.len(){
             for _ in 0..self.values[i]{
@@ -120,7 +120,7 @@ impl DefaultCounter {
             }
         }
         result.shuffle(&mut thread_rng());
-        println!("{:?}", result);
+        //println!("{:?}", result);
         result
     }
 

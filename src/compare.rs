@@ -9,6 +9,7 @@ use crate::io::get_writer;
 use crate::observed::Mutation;
 use crate::sample::SampledMutations;
 use crate::{Float, MutationType};
+use crate::counts::DefaultCounter;
 
 pub fn compare_mutations(
     classified_observed_mutations: &[Mutation],
@@ -19,7 +20,8 @@ pub fn compare_mutations(
     let mut result = vec![];
     let observed_mutations =
         tally_up_observed_mutations(classified_observed_mutations, filter_for_id);
-
+    let mut sampled_lof_long : Vec<usize>;
+    let mut sampled_lof : DefaultCounter;
     let no_observations = ObservedMutationCounts::default(); // no observed mutations
     for (region, region_expected) in expected_mutations {
         let region_observed = observed_mutations.get(region).unwrap_or(&no_observations);
@@ -28,7 +30,8 @@ pub fn compare_mutations(
         })?;
         //let F: Vec<i32> = B.iter().zip(V.iter()).map(|(&b, &v)| b - v).collect();
         
-        let mut sampled_lof: Vec<usize>;
+        sampled_lof_long = vec![];
+        //let x = &mut sampled_l;
         let mut observed_lof = 0;
         let mut expected_lof = 0.0;
         for mutation_type in MutationType::iter() {
@@ -46,27 +49,37 @@ pub fn compare_mutations(
                     continue; // will not add to result
                 }
             };
-            // if mutation_type == MutationType::Nonsense || mutation_type == MutationType::SpliceSite || mutation_type == MutationType::FrameshiftIndel {
-            //     expected_lof += expected;
-            //     observed_lof += observed;
-            //     let long_sampled = sampled.to_long();
-            //     if sampled_lof.len() == 0 {
-            //         sampled_lof = long_sampled
-            //     } else {
-            //         for i in 0..sampled_lof.len() {
-            //             sampled_lof[i] += long_sampled[i]
-            //         }
-            //     }
-            // }
-            println!("n_samples:{:#?}",sampled);
-            
+            if mutation_type == MutationType::Nonsense || mutation_type == MutationType::SpliceSite || mutation_type == MutationType::FrameshiftIndel {
+                expected_lof += expected;
+                observed_lof += observed;
+                let long_sampled = sampled.to_long();
+                if sampled_lof_long.len() == 0 {
+                    sampled_lof_long = long_sampled
+                } else {
+                    for i in 0..sampled_lof_long.len() {
+                        sampled_lof_long[i] += long_sampled[i]
+                    }
+                }
+            };
+
             let p_value = sampled.p_values().n_hits_or_more(observed);
             //TODO: add expected_uppper and expected_lower bound for some alpha
             //should be sampled.p_values().sort() [alpha/2.0] og [-(alpha/2.0)]
             let comparison =
                 ComparedMutations::new(region.clone(), mutation_type, observed, expected, p_value);
             result.push(comparison);
+        };
+
+        sampled_lof = DefaultCounter::new();
+        for x in sampled_lof_long {
+            sampled_lof.inc(x);
         }
+        //println!("sampled_lof:{:#?}",sampled_lof);
+        //println!("{:#?}", attributes);
+        let p_value = sampled_lof.p_values().n_hits_or_more(observed_lof);
+        let comparison = ComparedMutations::new_lof(region.clone(), observed_lof, expected_lof, p_value);
+        result.push(comparison);
+        
     }
     result.sort_unstable_by(|a, b| a.p_value.partial_cmp(&b.p_value).unwrap_or(Equal));
     Ok(result)
@@ -102,6 +115,8 @@ pub struct ComparedMutations {
     p_value: Float,
 }
 
+const LOF_STRING: &'static str = "LoF";
+
 impl ComparedMutations {
     pub fn new(
         region: String,
@@ -116,6 +131,20 @@ impl ComparedMutations {
             expected,
             p_value,
             mutation_type: mutation_type.as_str(),
+        }
+    }
+    pub fn new_lof(
+        region: String,
+        observed: usize,
+        expected: Float,
+        p_value: Float,
+    ) -> Self {
+        Self {
+            region,
+            observed,
+            expected,
+            p_value,
+            mutation_type: LOF_STRING,
         }
     }
 }
