@@ -47,6 +47,9 @@ pub fn transform_gff3_annotations(
     for row_result in csv_reader.deserialize() {
         let row: GFF3Record = row_result?;
         let attributes = row.attributes.context("Missing attributes in GFF3 file")?;
+        if row.seq_type.as_str() == "gene" {
+            continue
+        }
         let transcript_type = get_attribute(&attributes, "transcript_type").context("missing transcript_type attribute")?;
         let gene_type = get_attribute(&attributes, "gene_type").context("missing gene_type attribute")?;
         //println!("attributes, {}", attributes);
