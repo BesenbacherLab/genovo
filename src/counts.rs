@@ -1,6 +1,8 @@
 use std::convert::TryFrom;
 use std::iter::{IntoIterator, Iterator};
 use std::ops::{Add, AddAssign};
+use rand::thread_rng;
+use rand::seq::SliceRandom;
 
 use mutexpect::MutationTypeIter;
 
@@ -109,6 +111,24 @@ impl DefaultCounter {
         }
         self.values[index] += 1
     }
+
+    pub fn to_long(&mut self) -> Vec<usize> {
+        let mut result = Vec::new();
+        for i in 0..self.values.len(){
+            for _ in 0..self.values[i]{
+                result.push(i)        
+            }
+        }
+        result.shuffle(&mut thread_rng());
+        println!("{:?}", result);
+        result
+    }
+
+    //pub fn combine_counters(&mut self, other: &DefaultCounter) -> Vec<usize> {
+    //    let long1 = self.to_long();
+    //    let long2 = other.to_long();
+    //    
+    //}
 
     /// Calculate all possible p-values for observing a given number of events.
     ///

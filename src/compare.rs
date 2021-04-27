@@ -26,6 +26,11 @@ pub fn compare_mutations(
         let region_sampled = sampled_mutations.get(region).with_context(|| {
             format!("Failed to look up sampled mutations for region {}", &region)
         })?;
+        //let F: Vec<i32> = B.iter().zip(V.iter()).map(|(&b, &v)| b - v).collect();
+        
+        let mut sampled_lof: Vec<usize>;
+        let mut observed_lof = 0;
+        let mut expected_lof = 0.0;
         for mutation_type in MutationType::iter() {
             if mutation_type == MutationType::Unknown {
                 continue; // we don't sample these
@@ -41,6 +46,20 @@ pub fn compare_mutations(
                     continue; // will not add to result
                 }
             };
+            // if mutation_type == MutationType::Nonsense || mutation_type == MutationType::SpliceSite || mutation_type == MutationType::FrameshiftIndel {
+            //     expected_lof += expected;
+            //     observed_lof += observed;
+            //     let long_sampled = sampled.to_long();
+            //     if sampled_lof.len() == 0 {
+            //         sampled_lof = long_sampled
+            //     } else {
+            //         for i in 0..sampled_lof.len() {
+            //             sampled_lof[i] += long_sampled[i]
+            //         }
+            //     }
+            // }
+            println!("n_samples:{:#?}",sampled);
+            
             let p_value = sampled.p_values().n_hits_or_more(observed);
             //TODO: add expected_uppper and expected_lower bound for some alpha
             //should be sampled.p_values().sort() [alpha/2.0] og [-(alpha/2.0)]
