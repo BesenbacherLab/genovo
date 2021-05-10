@@ -232,22 +232,22 @@ mod tests {
 chr1	test	gene	1	100	.	+	.	attrs
 chr1	test	gene	1	100	.	+	.	attrs
 chr1	test	gene	1	100	.	+	.	attrs
-chr1	test	transcript	10	90	.	+	.	foo=bar;ID=transcript1;baz=quux
-chr1	test	exon	20	30	.	+	.	ID=ex1;Parent=transcript1
-chr1	test	exon	35	40	.	+	.	ID=ex2;Parent=transcript1
-chr1	test	CDS	20	25	.	+	2	Parent=transcript1;ID=cds1;bla=bla
-chr1	test	CDS	38	40	.	+	1	bla=bla;Parent=transcript1;ID=cds2
-chr2	test	transcript	10	90	.	+	.	foo=bar;ID=transcript2;baz=quux
-chr2	test	exon	20	30	.	+	.	ID=ex3;Parent=transcript2
-chr2	test	exon	35	40	.	+	.	ID=ex4;Parent=transcript2
-chr2	test	CDS	20	25	.	+	2	Parent=transcript2;ID=cds2;bla=bla
-chr2	test	CDS	38	40	.	+	1	bla=bla;Parent=transcript2;ID=cds3
+chr1	test	transcript	10	90	.	+	.	foo=bar;ID=transcript1;baz=quux;gene_type=protein_coding;transcript_type=protein_coding
+chr1	test	exon	20	30	.	+	.	ID=ex1;Parent=transcript1;gene_type=protein_coding;transcript_type=protein_coding
+chr1	test	exon	35	40	.	+	.	ID=ex2;Parent=transcript1;gene_type=protein_coding;transcript_type=protein_coding
+chr1	test	CDS	20	25	.	+	2	Parent=transcript1;ID=cds1;bla=bla;gene_type=protein_coding;transcript_type=protein_coding
+chr1	test	CDS	38	40	.	+	1	bla=bla;Parent=transcript1;ID=cds2;gene_type=protein_coding;transcript_type=protein_coding
+chr2	test	transcript	10	90	.	+	.	foo=bar;ID=transcript2;baz=quux;gene_type=protein_coding;transcript_type=protein_coding
+chr2	test	exon	20	30	.	+	.	ID=ex3;Parent=transcript2;gene_type=protein_coding;transcript_type=protein_coding
+chr2	test	exon	35	40	.	+	.	ID=ex4;Parent=transcript2;gene_type=protein_coding;transcript_type=protein_coding
+chr2	test	CDS	20	25	.	+	2	Parent=transcript2;ID=cds2;bla=bla;gene_type=protein_coding;transcript_type=protein_coding
+chr2	test	CDS	38	40	.	+	1	bla=bla;Parent=transcript2;ID=cds3;gene_type=protein_coding;transcript_type=protein_coding
 ";
         let mut fd = std::fs::File::create(file).unwrap();
         fd.write_all(anno_str.as_bytes()).unwrap();
         drop(fd);
 
-        let annos = transform_gff3_annotations(file, None).unwrap();
+        let annos = transform_gff3_annotations(file, None, None).unwrap();
         assert_eq!(annos.len(), 2);
         let a = &annos[0];
         assert_eq!(a.name, "transcript1");
