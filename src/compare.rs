@@ -28,10 +28,8 @@ pub fn compare_mutations(
         let region_sampled = sampled_mutations.get(region).with_context(|| {
             format!("Failed to look up sampled mutations for region {}", &region)
         })?;
-        //let F: Vec<i32> = B.iter().zip(V.iter()).map(|(&b, &v)| b - v).collect();
         
         sampled_lof_long = vec![];
-        //let x = &mut sampled_l;
         let mut observed_lof = 0;
         let mut expected_lof = 0.0;
         for mutation_type in MutationType::iter() {
