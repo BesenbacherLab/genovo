@@ -62,7 +62,7 @@ You can always combine the `--id` option with any other option.
 
 You can download a test data set from the git repository:
 ```
-wget https://github.com/BesenbacherLab/genovo/raw/main/test_data/test_data.tar.gz
+wget https://github.com/BesenbacherLab/genovo/raw/master/test_data/test_data.tar.gz
 tar xvzf test_data.tar.gz
 ```
 
@@ -74,22 +74,22 @@ genovo \
 	--observed-mutations observed_mutations_DDD_2017_chr22.txt \
 	--genome hg19_chr22.2bit \
 	--point-mutation-probabilities SNV_mutation_rate_model.txt \
-    --indel-mutation-probabilities indel_mutation_rate_model.txt \
-    --scaling-factor 8586 \
-    --significant-mutations genovo_results_chr22.txt
+	--indel-mutation-probabilities indel_mutation_rate_model.txt \
+	--scaling-factor 8586 \
+	--significant-mutations genovo_results_chr22.txt
 ```
 
 The command takes ~1 minute to run on a "normal" computer.
 It will write the comparisons between observed, expected and sampled mutations to the file `genovo_results_chr22.txt`. If the `--significant-mutations` argument is not used the results will be written to STDOUT.
-For each transcript, /t/, and mutation type, /m/, the output contains the following output columns
+For each transcript, *t*, and mutation type, *m*, the output contains the following output columns
 
 |column           |description|
 |---|---|
-|observed        |The number observed number of /m/ mutations in transcript /t/|
-|expected        |The number expected number of /m/ mutations in transcript /t/ according to the mutation rate models|
+|observed        |The number observed number of *m* mutations in transcript *t*|
+|expected        |The number expected number of *m* mutations in transcript *t* according to the mutation rate models|
 |expected_lower  |The lower bound of the confidence interval around the expected number of mutations|
 |expected_upper  |The upper bound of the confidence interval around the expected number of mutations|
-|p_value         |A one-sided p-value for a sampling based test of whether there are more observed mutations of type /m/ in transcript /t/ than we would expect given our mutation rate models|
+|p_value         |A one-sided p-value for a sampling based test of whether there are more observed mutations of type *m* in transcript *t* than we would expect given our mutation rate models|
 
 
 When testing on de novo mutations from trios the `--scaling-factor` should be two times the number of trios in the data. So in this case it is set to 8586 since the data set with the observed mutations looked for de novo mutations in 4293 children.
