@@ -1,7 +1,7 @@
 [package]
 name = "genovo"
 version = "0.2.6"
-authors = ["Jörn Bethune <joern@localhost>"]
+authors = ["Jörn Bethune <joern@localhost>", "Søren Besenbacher <besenbacher@clin.au.dk>"]
 repository = "https://github.com/BesenbacherLab/genovo"
 edition = "2018"
 readme = "README.md"
@@ -13,8 +13,8 @@ description = "Determine genes with significantly more mutations than expected b
 
 [dependencies]
 clap = "^2.33"
-mutexpect = { version = "0.2.6", path = "../mutexpect/" }
-twobit = { version = "0.1", path = "../rust-twobit/" }
+mutexpect = { version = "0.2.7", path = "../mutexpect/" }
+twobit = { version = "0.1.1", path = "../rust-twobit/" }
 pattern_partition_prediction = { version = "0.1.4", path = "../pattern_partition_prediction/" }
 tabfile = "0.2"
 rand = "0.7"

@@ -57,24 +57,50 @@ This is useful for parallel execution. You can launch a separate job for each tr
 Please note that `--id` only accepts a single ID. Multiple IDs are not supported.
 You can always combine the `--id` option with any other option.
 
-### Steps of the pipeline
 
-Each of the steps of the pipeline can be executed in isolation by specifying the `--action STEP` parameter.
-If no `--action` parameter is specified, all steps are run.
-For example, if you want to run the entire pipeline for a specific transcript, you can execute the following command:
+### Running the whole pipeline on a test data set
+
+You can download a test data set from the git repository:
+```
+wget https://github.com/BesenbacherLab/genovo/raw/main/test_data/test_data.tar.gz
+tar xvzf test_data.tar.gz
+```
+
+If you want to run the entire pipeline on the test data you can execute the following command:
 
 ```
 genovo \
-	--id ENST00000641515.2 \
-	--gff3 gencode.v32.annotation.gff3.protein_coding.gz \
-	--observed-mutations observed_mutations.txt \
-	--genome hg38.2bit \
-	--point-mutation-probabilities PaPa_rates.txt
+	--gff3 gencode.v19.CCDS.annotation.protein_coding_chr22.gff3.gz \
+	--observed-mutations observed_mutations_DDD_2017_chr22.txt \
+	--genome hg19_chr22.2bit \
+	--point-mutation-probabilities SNV_mutation_rate_model.txt \
+    --indel-mutation-probabilities indel_mutation_rate_model.txt \
+    --scaling-factor 8586 \
+    --significant-mutations genovo_results_chr22.txt
 ```
-(line breaks included for clarity)
 
-This will print the comparisons between observed, expected and sampled mutations to STDOUT.
-You can add the `--significant-mutations FILE` parameter to write the results to a file instead.
+The command takes ~1 minute to run on a "normal" computer.
+It will write the comparisons between observed, expected and sampled mutations to the file `genovo_results_chr22.txt`. If the `--significant-mutations` argument is not used the results will be written to STDOUT.
+For each transcript, /t/, and mutation type, /m/, the output contains the following output columns
+
+|column           |description|
+|---|---|
+|observed        |The number observed number of /m/ mutations in transcript /t/|
+|expected        |The number expected number of /m/ mutations in transcript /t/ according to the mutation rate models|
+|expected_lower  |The lower bound of the confidence interval around the expected number of mutations|
+|expected_upper  |The upper bound of the confidence interval around the expected number of mutations|
+|p_value         |A one-sided p-value for a sampling based test of whether there are more observed mutations of type /m/ in transcript /t/ than we would expect given our mutation rate models|
+
+
+When testing on de novo mutations from trios the `--scaling-factor` should be two times the number of trios in the data. So in this case it is set to 8586 since the data set with the observed mutations looked for de novo mutations in 4293 children.
+
+The `SNV_mutation_rate_model.txt` and `indel_mutation_rate_model.txt` are mutation rate models created using [kmerpapa](https://github.com/BesenbacherLab/kmerPaPa). Trained models in the right input format can be downloaded from https://github.com/BesenbacherLab/Genovo_Input.
+
+
+### Steps of the pipeline
+
+Each of the steps of the pipeline can be executed in isolation by specifying the `--action STEP` parameter.
+If no `--action` parameter is specified, all steps are run (as in the example above).
 
 #### transform
 
