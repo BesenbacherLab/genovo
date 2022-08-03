@@ -85,8 +85,8 @@ For each transcript, *t*, and mutation type, *m*, the output contains the follow
 
 |column           |description|
 |---|---|
-|observed        |The number observed number of *m* mutations in transcript *t*|
-|expected        |The number expected number of *m* mutations in transcript *t* according to the mutation rate models|
+|observed        |The observed number of *m* mutations in transcript *t*|
+|expected        |The expected number of *m* mutations in transcript *t* according to the mutation rate models|
 |expected_lower  |The lower bound of the confidence interval around the expected number of mutations|
 |expected_upper  |The upper bound of the confidence interval around the expected number of mutations|
 |p_value         |A one-sided p-value for a sampling based test of whether there are more observed mutations of type *m* in transcript *t* than we would expect given our mutation rate models|
