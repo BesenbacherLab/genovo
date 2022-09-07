@@ -14,7 +14,7 @@ description = "Determine genes with significantly more mutations than expected b
 [dependencies]
 clap = "^2.33"
 mutexpect = { version = "0.2.7", path = "../mutexpect/" }
-twobit = { version = "0.1.1", path = "../rust-twobit/" }
+twobit = "0.1.1"
 pattern_partition_prediction = { version = "0.1.4", path = "../pattern_partition_prediction/" }
 tabfile = "0.2"
 rand = "0.7"
