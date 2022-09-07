@@ -1,6 +1,6 @@
 [package]
 name = "genovo"
-version = "0.2.6"
+version = "0.3.1"
 authors = ["Jörn Bethune <joern@localhost>", "Søren Besenbacher <besenbacher@clin.au.dk>"]
 repository = "https://github.com/BesenbacherLab/genovo"
 edition = "2018"
