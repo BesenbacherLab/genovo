@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 
 use anyhow::{Context, Result};
 
-use mutexpect::{possible_mutations, MutationEvent, SeqAnnotation};
+use mutexpect::{possible_mutations, print_possible_mutations_pos, MutationEvent, SeqAnnotation};
 use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
 use twobit::TwoBitFile;
 
@@ -64,6 +64,32 @@ pub fn enumerate_possible_mutations(
 
     Ok(result)
 }
+
+pub fn print_possible_mutations(
+    annotations: &[SeqAnnotation],
+    ref_genome: &TwoBitFile,
+    filter_for_id: Option<&str>,
+    include_intronic : bool,
+    include_unknown : bool,
+    filter_plof : bool,
+) -> Result<()> {
+    let radius = 4;
+    for annotation in annotations {
+        if let Some(id) = filter_for_id {
+            if annotation.name != id {
+                continue;
+            }
+        }
+        let start = annotation.range.start - radius;
+        let stop = annotation.range.stop + radius + 1;
+        let seq = ref_genome.sequence(&annotation.chr, start, stop)?;
+        print_possible_mutations_pos(&seq, &annotation, include_intronic, include_unknown, filter_plof);
+    }
+
+    Ok(())
+}
+
+
 
 pub fn write_to_file(out_path: &str, possible_mutations: &PossibleMutations) -> Result<()> {
     let writer = get_writer(out_path)

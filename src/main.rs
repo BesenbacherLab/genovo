@@ -21,6 +21,7 @@ type MutationType = mutexpect::MutationType;
 
 use crate::compare::compare_mutations;
 use crate::enumerate::enumerate_possible_mutations;
+use crate::enumerate::print_possible_mutations;
 use crate::error::MissingCommandLineArgumentError;
 use crate::expect::expected_number_of_mutations;
 use crate::observed::classify_mutations;
@@ -254,10 +255,11 @@ fn main() -> Result<()> {
         }
     };
 
-    println!("enumerate");
+    
     //action=enumerate
     let possible_mutations = {
         if run_all || matches.value_of("action") == Some("enumerate") {
+            println!("enumerate");
             let possible_mutations = enumerate_possible_mutations(
                 require_initialization(&regions, "--genomic-regions")?,
                 require_initialization(&ref_genome, "--genome")?,
@@ -284,6 +286,21 @@ fn main() -> Result<()> {
         } else {
             None
         }
+    };
+
+
+    //action=possible_mutations
+    if matches.value_of("action") == Some("possible_mutations") {
+        println!("possible_mutations");
+        print_possible_mutations(
+            require_initialization(&regions, "--genomic-regions")?,
+            require_initialization(&ref_genome, "--genome")?,
+            id,
+            include_intronic,
+            include_unknown,
+            filter_plof,
+        )?;
+        return Ok(());
     };
 
     println!("expect");
