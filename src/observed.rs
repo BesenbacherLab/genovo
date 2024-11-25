@@ -234,7 +234,8 @@ pub fn read_mutations_from_file<P: AsRef<Path>>(
         let record = record_result?;
         let fields = record.fields();
         if fields.len() < 4 {
-            return Err( ParseError::new(format!("Bad format in line {}. Expecting at least 4 instead of {} tab-delimited fields: chr, pos, ref, alt", record.line_number(), fields.len()) ).into());
+            return Err( ParseError::new(format!("Bad format in line {}. Expecting at least 4 instead of {} space-delimited fields: chr, pos, ref, alt", record.line_number(), fields.len()) ).into());
+            // TODO: fixed wrong error message, but maybe tab-delimited is better.
         }
         let chromosome = fields[0].to_string();
         let position = {
