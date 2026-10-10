@@ -11,6 +11,7 @@ use mutexpect::MutationEvent;
 
 use crate::counts::DefaultCounter;
 use crate::io::{get_reader, get_writer};
+use crate::seed::stream_rng;
 use crate::{Float, MutationType};
 
 type Probability = Float;
@@ -20,9 +21,9 @@ pub fn sample_mutations(
     possible_mutations: &HashMap<String, Vec<MutationEvent>>,
     number_of_samplings: usize,
     filter_for_id: Option<&str>,
+    seed: u64,
 ) -> Result<SampledMutations> {
-    let random = rand::thread_rng();
-    let mut sampler = random.sample_iter(Uniform::new(0f32, 1f32));
+    let uniform = Uniform::new(0f32, 1f32);
 
     let mut result: SampledMutations = HashMap::new();
     for (region_name, mutation_events) in possible_mutations {
@@ -47,11 +48,12 @@ pub fn sample_mutations(
         let mut distributions = HashMap::new();
 
         for (mutation_type, mutation_probabilities) in &mutations {
+            let mut rng = stream_rng(seed, "sample", region_name, *mutation_type);
             let mut counter = DefaultCounter::new();
             for _ in 0..number_of_samplings {
                 let mut hits = 0;
                 for probability in mutation_probabilities {
-                    if *probability >= sampler.next().expect("iterator protocol") {
+                    if *probability >= rng.sample(uniform) {
                         hits += 1;
                     }
                 }
@@ -87,7 +89,10 @@ pub fn write_to_file(out_path: &str, sampled_mutations: &SampledMutations) -> Re
     let mut csv_writer = csv::WriterBuilder::new()
         .delimiter(b'\t')
         .from_writer(writer);
-    for (region, distributions) in sampled_mutations {
+    let mut regions: Vec<&String> = sampled_mutations.keys().collect();
+    regions.sort();
+    for region in regions {
+        let distributions = &sampled_mutations[region];
         let mut row = CSVRow::default();
         row.region = region.clone();
         for (mut_type, distribution) in distributions {
@@ -121,22 +126,29 @@ pub fn read_from_file(in_path: &str) -> Result<SampledMutations> {
     for row_result in csv_reader.deserialize() {
         let row: CSVRow = row_result?;
         let mut samplings: HashMap<MutationType, DefaultCounter> = HashMap::new();
-        samplings.insert(MutationType::Unknown, row.unknown.as_str().try_into()?);
-        samplings.insert(
-            MutationType::Synonymous,
-            row.synonymous.as_str().try_into()?,
-        );
-        samplings.insert(MutationType::Missense, row.missense.as_str().try_into()?);
-        samplings.insert(MutationType::Nonsense, row.nonsense.as_str().try_into()?);
-        samplings.insert(
-            MutationType::StartCodon,
-            row.start_codon.as_str().try_into()?,
-        );
-        samplings.insert(MutationType::StopLoss, row.stop_loss.as_str().try_into()?);
-        samplings.insert(
-            MutationType::SpliceSite,
-            row.splice_site.as_str().try_into()?,
-        );
+        // An empty column means that the region has no possible mutations of
+        // that type (nothing was sampled).
+        for (mutation_type, value) in [
+            (MutationType::Unknown, &row.unknown),
+            (MutationType::Synonymous, &row.synonymous),
+            (MutationType::Missense, &row.missense),
+            (MutationType::Nonsense, &row.nonsense),
+            (MutationType::StartCodon, &row.start_codon),
+            (MutationType::StopLoss, &row.stop_loss),
+            (MutationType::SpliceSite, &row.splice_site),
+            (MutationType::Intronic, &row.intronic),
+            (MutationType::InFrameIndel, &row.inframe_indel),
+            (MutationType::FrameshiftIndel, &row.frameshift_indel),
+        ]
+        .iter()
+        {
+            if !value.is_empty() {
+                let counter = value.as_str().try_into().with_context(|| {
+                    format!("bad {} counts for region {}", mutation_type, row.region)
+                })?;
+                samplings.insert(*mutation_type, counter);
+            }
+        }
         result.insert(row.region, samplings);
     }
     Ok(result)

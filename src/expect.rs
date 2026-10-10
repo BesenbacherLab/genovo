@@ -75,7 +75,10 @@ pub fn write_to_file(
     let mut csv_writer = csv::WriterBuilder::new()
         .delimiter(b'\t')
         .from_writer(writer);
-    for (region, c) in expected_mutations {
+    let mut regions: Vec<&String> = expected_mutations.keys().collect();
+    regions.sort();
+    for region in regions {
+        let c = &expected_mutations[region];
         let row = CSVRow {
             region: region.clone(),
             unknown: c.unknown,

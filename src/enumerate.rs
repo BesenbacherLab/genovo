@@ -3,7 +3,9 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 
 use anyhow::{Context, Result};
 
-use mutexpect::{possible_mutations, print_possible_mutations_pos, MutationEvent, SeqAnnotation};
+use mutexpect::{
+    for_each_possible_mutation, possible_mutations, Alteration, MutationEvent, SeqAnnotation,
+};
 use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
 use twobit::TwoBitFile;
 
@@ -33,9 +35,16 @@ pub fn enumerate_possible_mutations(
                 continue;
             }
         }
-        let start = annotation.range.start - radius;
-        let stop = annotation.range.stop + radius + 1;
-        let seq = ref_genome.sequence(&annotation.chr, start, stop)?;
+        let seq = match annotation_sequence(ref_genome, annotation, radius) {
+            Ok(seq) => seq,
+            Err(e) => {
+                eprintln!(
+                    "[WARNING] Skipping faulty annotation {}: {}",
+                    annotation.name, e
+                );
+                continue;
+            }
+        };
         match possible_mutations(&seq, &annotation, mutation_rates, indel_mutation_rates, drop_nan, include_intronic, include_unknown, filter_plof) {
             Ok(mut mutations) => {
                 if scaling_factor != 1.0 {
@@ -65,37 +74,96 @@ pub fn enumerate_possible_mutations(
     Ok(result)
 }
 
-pub fn print_possible_mutations(
+/// The genomic sequence of an annotated region plus `radius` flanking bases on
+/// each side.
+fn annotation_sequence(
+    ref_genome: &TwoBitFile,
+    annotation: &SeqAnnotation,
+    radius: usize,
+) -> Result<String> {
+    let start = annotation.range.start.checked_sub(radius).with_context(|| {
+        format!(
+            "region starts less than {} bases from the start of {}",
+            radius, annotation.chr
+        )
+    })?;
+    let stop = annotation.range.stop + radius + 1;
+    Ok(ref_genome.sequence(&annotation.chr, start, stop)?)
+}
+
+/// Write every possible mutation of the annotated regions as a tab-separated
+/// line: chromosome, 1-based position, reference base, alternative (a base;
+/// the reference base followed by `NNN` for an in-frame indel or `N` for a
+/// frameshift indel), transcript ID, mutation type and the sequence context of
+/// `2 * radius + 1` bases centred on the position.
+pub fn write_possible_mutations<W: Write>(
+    mut out: W,
     annotations: &[SeqAnnotation],
     ref_genome: &TwoBitFile,
+    radius: usize,
     filter_for_id: Option<&str>,
-    include_intronic : bool,
-    include_unknown : bool,
-    filter_plof : bool,
+    include_intronic: bool,
+    include_unknown: bool,
+    filter_plof: bool,
 ) -> Result<()> {
-    let radius = 4;
     for annotation in annotations {
         if let Some(id) = filter_for_id {
             if annotation.name != id {
                 continue;
             }
         }
-        let start = annotation.range.start - radius;
-        let stop = annotation.range.stop + radius + 1;
-        let seq = ref_genome.sequence(&annotation.chr, start, stop)?;
-        print_possible_mutations_pos(&seq, &annotation, include_intronic, include_unknown, filter_plof);
+        let seq = match annotation_sequence(ref_genome, annotation, radius) {
+            Ok(seq) => seq,
+            Err(e) => {
+                eprintln!(
+                    "[WARNING] Skipping faulty annotation {}: {}",
+                    annotation.name, e
+                );
+                continue;
+            }
+        };
+        for_each_possible_mutation(
+            &seq,
+            annotation,
+            radius,
+            include_intronic,
+            include_unknown,
+            filter_plof,
+            |site| -> Result<()> {
+                for m in site.mutations {
+                    let alt = match m.alteration {
+                        Alteration::Point(base) => base.name().to_string(),
+                        Alteration::InFrameIndel => format!("{}NNN", site.ref_base.name()),
+                        Alteration::FrameshiftIndel => format!("{}N", site.ref_base.name()),
+                    };
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}\t{}\t{}\t{:?}\t{}",
+                        annotation.chr,
+                        site.genomic_position + 1,
+                        site.ref_base.name(),
+                        alt,
+                        annotation.name,
+                        m.mutation_type,
+                        site.seq_window
+                    )?;
+                }
+                Ok(())
+            },
+        )?;
     }
-
+    out.flush()?;
     Ok(())
 }
-
-
 
 pub fn write_to_file(out_path: &str, possible_mutations: &PossibleMutations) -> Result<()> {
     let writer = get_writer(out_path)
         .with_context(|| format!("failed to open file {} for writing", out_path))?;
     let mut buf_writer = BufWriter::new(writer);
-    for (name, mutations) in possible_mutations {
+    let mut names: Vec<&String> = possible_mutations.keys().collect();
+    names.sort();
+    for name in names {
+        let mutations = &possible_mutations[name];
         buf_writer.write_all(format!("#{}\n", name).as_bytes())?;
         for mutation in mutations {
             buf_writer.write_all(

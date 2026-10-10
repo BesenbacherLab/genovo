@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::seed::stream_rng;
 use crate::counts::{ExpectedMutationCounts, ObservedMutationCounts};
 use crate::io::get_writer;
 use crate::observed::Mutation;
@@ -17,6 +18,7 @@ pub fn compare_mutations(
     sampled_mutations: &SampledMutations,
     filter_for_id: Option<&str>,
     alpha : Float,
+    seed: u64,
 ) -> Result<Vec<ComparedMutations>> {
     let mut result = vec![];
     let observed_mutations =
@@ -53,7 +55,7 @@ pub fn compare_mutations(
                 observed_lof += observed;
                 // sampled is histogram of counts. It's sum should be number of samples.
                 // long samples is count for each sample. Has lenght equal to the number of samples. 
-                let long_sampled = sampled.to_long();
+                let long_sampled = sampled.to_long(&mut stream_rng(seed, "lof", region, mutation_type));
                 if sampled_lof_long.len() == 0 {
                     sampled_lof_long = long_sampled
                 } else {
@@ -84,7 +86,15 @@ pub fn compare_mutations(
         result.push(comparison);
         
     }
-    result.sort_unstable_by(|a, b| a.p_value.partial_cmp(&b.p_value).unwrap_or(Equal));
+    // Sort by p-value; ties by region and mutation type, so the output order
+    // does not depend on hash map order.
+    result.sort_by(|a, b| {
+        a.p_value
+            .partial_cmp(&b.p_value)
+            .unwrap_or(Equal)
+            .then_with(|| a.region.cmp(&b.region))
+            .then_with(|| a.mutation_type.cmp(b.mutation_type))
+    });
     Ok(result)
 }
 

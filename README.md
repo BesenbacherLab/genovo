@@ -46,6 +46,10 @@ If no `--action` parameter is specified, the entire pipeline is run and all file
 
 You can also specify `-` as an input/output file. Depending on the action, this will be interpreted as STDIN or as STDOUT.
 
+Steps that need the genomic regions accept either `--genomic-regions` (the output of `transform`) or `--gff3` (then the transformation is done on the fly).
+
+Progress messages (the name of each step as it starts) are written to STDERR, so STDOUT only contains results.
+
 If you are concerned about space usage you can also specify a `.gz` file extension.
 `genovo` will automatically decompress/compress the input/output.
 
@@ -215,6 +219,14 @@ This creates an empirical distribution of sampled mutations that will be used to
 |--possible-mutations      |input  |The possible mutations for each transcript|
 |--number-of-random-samples|integer|How many random samples? default=1000|
 |--sampled-mutations       |output |Distributions of sampled mutations|
+|--seed                    |integer|Seed for the random numbers (optional, see below)|
+
+##### Reproducibility
+
+The `sample` and `compare` steps use random numbers. With `--seed N` a run is reproducible: the same inputs and seed give identical output files.
+Each transcript and mutation type gets its own random number stream derived from the seed, so the results are the same whether the pipeline is run in one go or step by step, and whether all transcripts are processed together or one at a time with `--id`.
+Without `--seed`, a random seed is chosen and written to STDERR, so the run can still be repeated.
+Give the same seed to `sample` and `compare` when running the steps separately.
 
 #### compare
 
@@ -231,6 +243,38 @@ And note that the p-values does not take into account the expected number of mut
 |--expected-mutations    |input |The number of expected mutations per transcript for each mutation type|
 |--sampled-mutations     |input |Distributions of sampled mutations|
 |--significant-mutations |output|A table of observed, expected, sampled and a p-value for different mutation types.|
+|--seed                  |integer|Seed for the random pairing of samples when combining LoF types (optional, see `sample`)|
+
+
+#### possible_mutations
+
+Not part of the pipeline (it only runs when given with `--action possible_mutations`).
+Writes every possible mutation of every transcript to STDOUT, one tab-separated line per mutation:
+
+|column|description|
+|---|---|
+|1|chromosome|
+|2|position (1-based)|
+|3|reference base|
+|4|alternative: a base for a point mutation; the reference base followed by `NNN` for an in-frame indel or by `N` for a frameshift indel|
+|5|transcript ID|
+|6|mutation type (e.g. `Missense`, `SpliceSite`, `FrameshiftIndel`)|
+|7|sequence context centred on the position|
+
+The same mutations are considered as in `enumerate`, with the same filters (`--include-intronic`, `--include-unknown`, `--filter-plof`, `--id`).
+The sequence context has the k-mer size of the `--point-mutation-probabilities` model if one is given, and is 9 bases otherwise.
+
+```
+genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit > possible_mutations.tsv
+```
+
+##### parameters
+
+|parameter        |input/output|description|
+|---|---|---|
+|--genomic-regions or --gff3|input|The transcripts|
+|--genome         |input |The reference genome in 2bit format|
+|--point-mutation-probabilities|input (optional)|Only used for the size of the sequence context|
 
 
 ## Mutation type numeric code table

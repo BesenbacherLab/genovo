@@ -12,6 +12,7 @@ mod expect;
 mod io;
 mod observed;
 mod sample;
+mod seed;
 mod transform;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -21,7 +22,7 @@ type MutationType = mutexpect::MutationType;
 
 use crate::compare::compare_mutations;
 use crate::enumerate::enumerate_possible_mutations;
-use crate::enumerate::print_possible_mutations;
+use crate::enumerate::write_possible_mutations;
 use crate::error::MissingCommandLineArgumentError;
 use crate::expect::expected_number_of_mutations;
 use crate::observed::classify_mutations;
@@ -44,7 +45,14 @@ fn main() -> Result<()> {
         .author("Jörn Bethune")
         .about("Determine genes enriched with de-novo mutations")
         .after_help("If no --action is given, all actions are executed.\n\
-                     Possible actions are: transform, enumerate, expect, sample, classify, compare" )
+                     Possible actions are: transform, enumerate, expect, sample, classify, compare\n\
+                     \n\
+                     --action possible_mutations is not part of the pipeline: it writes every possible\n\
+                     mutation (chr, position, ref, alt, transcript, mutation type, sequence context) to\n\
+                     STDOUT. It needs --genome and --gff3 or --genomic-regions; the context has the\n\
+                     k-mer size of --point-mutation-probabilities if given (otherwise 9).\n\
+                     \n\
+                     Progress messages are written to STDERR." )
         .arg(Arg::with_name("action")
              .long("action")
              .value_name("ACTION")
@@ -141,6 +149,11 @@ fn main() -> Result<()> {
              .default_value("1000")
              .help("The number of random samples that should be generated")
              .takes_value(true))
+        .arg(Arg::with_name("seed")
+             .long("--seed")
+             .value_name("NUMBER")
+             .help("Seed for the random numbers of the sample and compare steps. Runs with the same seed and inputs give identical results. Default: a random seed, which is reported on STDERR")
+             .takes_value(true))
         .arg(Arg::with_name("required-tag")
              .long("--required-tag")
              .value_name("TAG")
@@ -170,6 +183,19 @@ fn main() -> Result<()> {
     let include_unknown = matches.occurrences_of("include-unknown") > 0;
     let filter_plof = matches.occurrences_of("filter-plof") > 0;
   
+    let seed: u64 = match matches.value_of("seed") {
+        Some(s) => s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--seed must be a non-negative integer, got {}", s))?,
+        None => {
+            let seed = rand::random();
+            if run_all || matches!(matches.value_of("action"), Some("sample") | Some("compare")) {
+                eprintln!("Random seed: {} (use --seed {} to reproduce this run)", seed, seed);
+            }
+            seed
+        }
+    };
+
     let required_tags: Option<Vec<&str>> = {
        if let Some(tags) = matches.values_of("required-tag"){
            Some(tags.collect())
@@ -228,7 +254,7 @@ fn main() -> Result<()> {
         }
     };
 
-    println!("transform");
+    eprintln!("transform");
     // action=transform
     let regions = {
         if let Some(gff3) = matches.value_of("gff3") {
@@ -236,7 +262,7 @@ fn main() -> Result<()> {
             if let Some(regions_file) = matches.value_of("genomic-regions") {
                 transform::write_sequence_annotations_to_file(regions_file, &regions)?;
             }
-            if !run_all {
+            if matches.value_of("action") == Some("transform") {
                 // we are done here
                 return Ok(());
             }
@@ -259,7 +285,7 @@ fn main() -> Result<()> {
     //action=enumerate
     let possible_mutations = {
         if run_all || matches.value_of("action") == Some("enumerate") {
-            println!("enumerate");
+            eprintln!("enumerate");
             let possible_mutations = enumerate_possible_mutations(
                 require_initialization(&regions, "--genomic-regions")?,
                 require_initialization(&ref_genome, "--genome")?,
@@ -291,10 +317,14 @@ fn main() -> Result<()> {
 
     //action=possible_mutations
     if matches.value_of("action") == Some("possible_mutations") {
-        println!("possible_mutations");
-        print_possible_mutations(
-            require_initialization(&regions, "--genomic-regions")?,
+        eprintln!("possible_mutations");
+        let radius = papa.as_ref().map_or(4, |p| p.radius());
+        let stdout = std::io::stdout();
+        write_possible_mutations(
+            std::io::BufWriter::new(stdout.lock()),
+            require_initialization(&regions, "--genomic-regions or --gff3")?,
             require_initialization(&ref_genome, "--genome")?,
+            radius,
             id,
             include_intronic,
             include_unknown,
@@ -303,7 +333,7 @@ fn main() -> Result<()> {
         return Ok(());
     };
 
-    println!("expect");
+    eprintln!("expect");
     //action=expect
     let expected_mutations = {
         if run_all || matches.value_of("action") == Some("expect") {
@@ -326,7 +356,7 @@ fn main() -> Result<()> {
         }
     };
 
-    println!("sample");
+    eprintln!("sample");
     //action=sample
     let sampled_mutations = {
         if run_all || matches.value_of("action") == Some("sample") {
@@ -339,6 +369,7 @@ fn main() -> Result<()> {
                 require_initialization(&possible_mutations, "--possible-mutations")?,
                 iterations,
                 id,
+                seed,
             )?;
 
             if let Some(sampled_mutations_file) = matches.value_of("sampled-mutations") {
@@ -358,7 +389,7 @@ fn main() -> Result<()> {
 
     std::mem::drop(possible_mutations); // let's free up some memory
 
-    println!("classify");
+    eprintln!("classify");
     //action=classify
     let classified_mutations = {
         if run_all || matches.value_of("action") == Some("classify") {
@@ -395,7 +426,7 @@ fn main() -> Result<()> {
         }
     };
 
-    println!("compare");
+    eprintln!("compare");
     //action=compare
     let _significant_mutations = {
         if run_all || matches.value_of("action") == Some("compare") {
@@ -410,6 +441,7 @@ fn main() -> Result<()> {
                 require_initialization(&sampled_mutations, "--sampled-mutations")?,
                 id,
                 alpha,
+                seed,
             )?;
 
             if let Some(significant_mutations_file) = matches.value_of("significant-mutations") {
