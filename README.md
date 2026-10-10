@@ -254,12 +254,12 @@ Writes every possible mutation of every transcript to STDOUT, one tab-separated 
 |column|description|
 |---|---|
 |1|chromosome|
-|2|position (1-based)|
-|3|reference base|
-|4|alternative: a base for a point mutation; the reference base followed by `NNN` for an in-frame indel or by `N` for a frameshift indel|
+|2|position (1-based); for indels the anchor base before the insertion/deletion point, as in VCF and in `--observed-mutations`|
+|3|reference base (for indels: the anchor base)|
+|4|alternative: a base for a point mutation; the anchor base followed by `NNN` for an in-frame indel or by `N` for a frameshift indel|
 |5|transcript ID|
 |6|mutation type (e.g. `Missense`, `SpliceSite`, `FrameshiftIndel`)|
-|7|sequence context centred on the position|
+|7|sequence context centred on the mutated base (for indels: on the base after the insertion/deletion point)|
 
 The same mutations are considered as in `enumerate`, with the same filters (`--include-intronic`, `--include-unknown`, `--filter-plof`, `--id`).
 The sequence context has the k-mer size of the `--point-mutation-probabilities` model if one is given, and is 9 bases otherwise.
@@ -276,6 +276,13 @@ genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit 
 |--genome         |input |The reference genome in 2bit format|
 |--point-mutation-probabilities|input (optional)|Only used for the size of the sequence context|
 
+
+## Tests
+
+`cargo test` runs the unit tests and end-to-end tests on three transcripts of the chr22 test data (`test_data/test_data.tar.gz`, unpacked automatically; needs `tar`).
+The end-to-end tests check that observed mutations are classified like the corresponding possible mutations, and compare the pipeline output (with `--seed 1`, in one go and step by step) with stored results in `tests/data/`.
+The whole of chr22 is tested with `cargo test --release -- --ignored`.
+After an intended change of the results, update the stored files with `GENOVO_BLESS=1 cargo test` (and `GENOVO_BLESS=1 cargo test --release -- --ignored pipeline_chr22`) and review the diff.
 
 ## Mutation type numeric code table
 
