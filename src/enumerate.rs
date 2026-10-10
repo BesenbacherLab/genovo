@@ -92,10 +92,15 @@ fn annotation_sequence(
 }
 
 /// Write every possible mutation of the annotated regions as a tab-separated
-/// line: chromosome, 1-based position, reference base, alternative (a base;
-/// the reference base followed by `NNN` for an in-frame indel or `N` for a
-/// frameshift indel), transcript ID, mutation type and the sequence context of
-/// `2 * radius + 1` bases centred on the position.
+/// line: chromosome, 1-based position, reference base, alternative, transcript
+/// ID, mutation type and the sequence context of `2 * radius + 1` bases.
+///
+/// Point mutations: the position and reference base of the mutated site, and
+/// the new base. Indels are written as in VCF and in the observed-mutations
+/// input: the position and base of the anchor (the base before the
+/// insertion/deletion point), and as alternative the anchor followed by `NNN`
+/// (in-frame) or `N` (frameshift). The context is centred on the base after
+/// the insertion/deletion point.
 pub fn write_possible_mutations<W: Write>(
     mut out: W,
     annotations: &[SeqAnnotation],
@@ -131,17 +136,31 @@ pub fn write_possible_mutations<W: Write>(
             filter_plof,
             |site| -> Result<()> {
                 for m in site.mutations {
-                    let alt = match m.alteration {
-                        Alteration::Point(base) => base.name().to_string(),
-                        Alteration::InFrameIndel => format!("{}NNN", site.ref_base.name()),
-                        Alteration::FrameshiftIndel => format!("{}N", site.ref_base.name()),
+                    // 1-based position and reference base of the written site
+                    let (position, ref_base, alt) = match m.alteration {
+                        Alteration::Point(base) => (
+                            site.genomic_position + 1,
+                            site.ref_base.name(),
+                            base.name().to_string(),
+                        ),
+                        Alteration::InFrameIndel | Alteration::FrameshiftIndel => {
+                            // the indel lies between genomic_position - 1 and
+                            // genomic_position; the anchor is the base before
+                            let anchor = site.seq_window.as_bytes()[radius - 1] as char;
+                            let n = if m.alteration == Alteration::InFrameIndel {
+                                "NNN"
+                            } else {
+                                "N"
+                            };
+                            (site.genomic_position, anchor, format!("{}{}", anchor, n))
+                        }
                     };
                     writeln!(
                         out,
                         "{}\t{}\t{}\t{}\t{}\t{:?}\t{}",
                         annotation.chr,
-                        site.genomic_position + 1,
-                        site.ref_base.name(),
+                        position,
+                        ref_base,
                         alt,
                         annotation.name,
                         m.mutation_type,
