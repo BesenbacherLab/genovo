@@ -127,6 +127,7 @@ The results for non-coding transcripts are a lot less informative.
 |---|---|---|
 |--gff3           |input |The GFF3 annotation file that contains transcript, exon and CDS information             |
 |--genomic-regions|output|A transformed version of the GFF3 entries, limited to transcripts, exons and CDS regions|
+|--regions-bed    |output (optional)|The positions where per-site allele numbers are needed (exons ± 2 bases; whole transcripts with `--include-intronic`) as a BED file. Can also be made from an existing `--genomic-regions` file.|
 
 
 #### enumerate

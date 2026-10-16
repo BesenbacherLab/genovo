@@ -4,6 +4,7 @@ use clap::{App, Arg};
 use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
 use twobit::TwoBitFile;
 
+mod allele_numbers;
 mod compare;
 mod counts;
 mod enumerate;
@@ -20,6 +21,7 @@ const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 type Float = f32;
 type MutationType = mutexpect::MutationType;
 
+use crate::allele_numbers::NeededSites;
 use crate::compare::compare_mutations;
 use crate::enumerate::enumerate_possible_mutations;
 use crate::enumerate::write_possible_mutations;
@@ -87,6 +89,11 @@ fn main() -> Result<()> {
              .takes_value(true))
 
         // input/output file arguments
+        .arg(Arg::with_name("regions-bed")
+             .long("regions-bed")
+             .value_name("FILE")
+             .help("With --action transform: also write the positions where allele numbers are needed (exons ± 2 bases, or whole regions with --include-intronic) as a BED file, e.g. to restrict a genome-wide allele number file")
+             .takes_value(true))
         .arg(Arg::with_name("genomic-regions")
              .long("genomic-regions")
              .value_name("FILE")
@@ -262,16 +269,25 @@ fn main() -> Result<()> {
             if let Some(regions_file) = matches.value_of("genomic-regions") {
                 transform::write_sequence_annotations_to_file(regions_file, &regions)?;
             }
+            if let Some(bed) = matches.value_of("regions-bed") {
+                NeededSites::from_annotations(&regions, include_intronic).write_bed(bed)?;
+            }
             if matches.value_of("action") == Some("transform") {
                 // we are done here
                 return Ok(());
             }
             Some(regions)
         } else if let Some(regions_file) = matches.value_of("genomic-regions") {
-            Some(mutexpect::read_sequence_annotations_from_file(
-                regions_file,
-                id,
-            )?)
+            let regions = mutexpect::read_sequence_annotations_from_file(regions_file, id)?;
+            if matches.value_of("action") == Some("transform") {
+                // only the BED file is left to do
+                let bed = matches.value_of("regions-bed").ok_or_else(|| {
+                    anyhow::anyhow!("--action transform needs --gff3 (or --genomic-regions with --regions-bed)")
+                })?;
+                NeededSites::from_annotations(&regions, include_intronic).write_bed(bed)?;
+                return Ok(());
+            }
+            Some(regions)
         } else if run_all || matches.value_of("action") == Some("transform") {
             {
                 return Err(anyhow::anyhow!("Please provide the --gff3 parameter"));
