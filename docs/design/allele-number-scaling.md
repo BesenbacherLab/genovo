@@ -1,7 +1,8 @@
 # Design note: per-site allele numbers and scaling-factor calibration
 
-Status: proposal, 2026-10-11. Step 1 of the implementation plan (§8) is
-implemented (2026-10-16): `src/allele_numbers.rs` and `--regions-bed`.
+Status: proposal, 2026-10-11. Implemented so far (§8): step 1 (2026-10-16,
+`src/allele_numbers.rs`, `--regions-bed`) and step 2 (2026-10-16,
+`src/scaling.rs`).
 
 ## 1. Goal
 
@@ -78,6 +79,9 @@ p_i = 1 − (1 − r_i)^(S · h(n_i))           computed as −expm1(S · h(n_i)
   number of segregating sites grows sublinearly with sample size, and the
   mixture of capture kits gives plateaus such as the one at 150–180k in
   Supplementary Fig. 6.
+- For an indel, `n_i` is the allele number of the base after the
+  insertion/deletion point (the position at which `enumerate` lists it; the
+  VCF anchor + 1), so that `enumerate` and `classify` use the same site.
 - `n_i = 0` (site not callable) gives `p_i = 0`. Sites with `n_i < n_min`
   (`--min-an`) are **masked**: they contribute neither expected nor observed
   mutations (§4.2).
@@ -318,7 +322,10 @@ indels. It does not today, because indels are only enumerated inside CDSs.
    synthetic file (missing sites, header, gzip/bgzip input, unsorted input
    rejected).
 2. Site-AN lookup structure plus the `h`/`S` calibration type (load and save
-   `calibration.tsv`), and `p_i` computed with `expm1`/`ln1p`. Unit tests:
+   `calibration.tsv`), and `p_i` computed with `expm1`/`ln1p`. Done: the
+   precise formula is already used for `--scaling-factor`; it changed 196 of
+   8,140 expected values on chr22 in the last float32 digit (≤ 2·10⁻⁷
+   relative), no sampled distribution or p-value. Unit tests:
    `h ≡ 1` reproduces `--scaling-factor` exactly; monotone interpolation;
    masking.
 3. `enumerate` and `classify` options (§6). Test: the chr22 golden results

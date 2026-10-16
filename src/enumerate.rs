@@ -11,6 +11,7 @@ use twobit::TwoBitFile;
 
 use crate::error::ParseError;
 use crate::io::{get_reader, get_writer};
+use crate::scaling::scale_probability;
 use crate::{Float, MutationType};
 
 type PossibleMutations = HashMap<String, Vec<MutationEvent>>;
@@ -47,18 +48,9 @@ pub fn enumerate_possible_mutations(
         };
         match possible_mutations(&seq, &annotation, mutation_rates, indel_mutation_rates, drop_nan, include_intronic, include_unknown, filter_plof) {
             Ok(mut mutations) => {
-                if scaling_factor != 1.0 {
-                    for mutation in &mut mutations {
-                        //println!(" {}", mutation.probability);
-                        let x:f64 = 1.0 - (mutation.probability as f64);
-                        let y:f64 = 1.0 - x.powf(scaling_factor as f64);
-                        mutation.probability = y as f32;
-                        //println!("{} {}",mutation.probability, y);
-                        assert!(mutation.probability>=0.0);
-                        assert!(mutation.probability<=1.0);
-                        //mutation.probability *= scaling_factor;
-                        //mutation.probability = f32::min(mutation.probability, 1.0)
-                    }
+                for mutation in &mut mutations {
+                    mutation.probability =
+                        scale_probability(mutation.probability as f64, scaling_factor as f64) as f32;
                 }
                 result.insert(annotation.name.clone(), mutations);
             }

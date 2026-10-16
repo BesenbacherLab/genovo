@@ -13,6 +13,7 @@ mod expect;
 mod io;
 mod observed;
 mod sample;
+mod scaling;
 mod seed;
 mod transform;
 
