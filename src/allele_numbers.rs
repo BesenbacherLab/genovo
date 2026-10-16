@@ -88,7 +88,6 @@ impl NeededSites {
         self.intervals.values().flatten().map(|i| i.len()).sum()
     }
 
-    #[cfg(test)]
     pub fn contains(&self, chr: &str, pos: usize) -> bool {
         self.intervals
             .get(chr)
@@ -111,7 +110,6 @@ impl NeededSites {
 }
 
 /// Index of the interval in the sorted, disjoint `list` containing `pos`.
-#[cfg(test)]
 fn find(list: &[Interval], pos: usize) -> Option<usize> {
     let i = list.partition_point(|iv| iv.stop <= pos);
     (i < list.len() && list[i].start <= pos).then(|| i)

@@ -5,6 +5,7 @@ use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
 use twobit::TwoBitFile;
 
 mod allele_numbers;
+mod calibrate;
 mod compare;
 mod counts;
 mod enumerate;
@@ -41,6 +42,92 @@ fn require_initialization<'a, T>(
         Some(v) => Ok(v),
         None => Err(MissingCommandLineArgumentError::new(cli_argument)),
     }
+}
+
+/// `--action calibrate`: fit S and h on the possible synonymous mutations.
+fn run_calibrate(
+    matches: &clap::ArgMatches,
+    regions: &Option<Vec<mutexpect::SeqAnnotation>>,
+    genome: &Option<TwoBitFile>,
+    papa: &Option<PaPaPred>,
+    id: Option<&str>,
+) -> Result<()> {
+    let regions = require_initialization(regions, "--genomic-regions or --gff3")?;
+    let genome = require_initialization(genome, "--genome")?;
+    let papa = require_initialization(papa, "--point-mutation-probabilities")?;
+    let required = |name: &'static str| {
+        matches
+            .value_of(name)
+            .ok_or_else(|| anyhow::anyhow!("--action calibrate needs --{}", name))
+    };
+    let an_file = required("allele-numbers")?;
+    let observed_file = required("observed-mutations")?;
+    let out = required("calibration")?;
+    let n_bins: usize = matches
+        .value_of("calibration-bins")
+        .expect("default value")
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--calibration-bins must be a positive integer"))?;
+    let n_min: u32 = match matches.value_of("min-an") {
+        Some(v) => v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--min-an must be a non-negative integer, got {}", v))?,
+        None => 0,
+    };
+    let ids = match matches.value_of("calibration-ids") {
+        Some(f) => Some(calibrate::read_ids(f)?),
+        None => None,
+    };
+    let needed = NeededSites::from_annotations(regions, false);
+    let allele_numbers = AlleleNumbers::read_from_file(an_file, &needed)?;
+    eprintln!(
+        "[INFO] allele numbers for {} of {} needed sites read from {}",
+        allele_numbers.len(),
+        needed.len(),
+        an_file
+    );
+    let options = calibrate::Options {
+        n_min,
+        ids,
+        filter_for_id: id,
+    };
+    let mut units = calibrate::collect_units(
+        regions,
+        genome,
+        papa,
+        &allele_numbers,
+        observed_file,
+        &needed,
+        &options,
+    )?;
+    let (mut calibration, bins) = calibrate::fit(&mut units, n_bins, n_min)?;
+    calibration.notes.push(format!(
+        "source\tgenovo {} --action calibrate: {} possible synonymous point mutations, {} observed, {} bins of allele numbers",
+        VERSION,
+        units.len(),
+        units.iter().filter(|u| u.y).count(),
+        bins.len()
+    ));
+    calibration
+        .notes
+        .push("note\tS_indel is not calibrated; it is set to S_snv".to_string());
+    calibration.write_to_file(out)?;
+    let diagnostics = match matches.value_of("calibration-diagnostics") {
+        Some(f) => Some(f.to_string()),
+        None if out != "-" => Some(format!("{}.diagnostics.tsv", out)),
+        None => None,
+    };
+    if let Some(d) = diagnostics {
+        calibrate::write_diagnostics(&d, &units, &bins, &calibration)?;
+    }
+    eprintln!(
+        "[INFO] S = {:e}, h at {} allele numbers from {} to {}",
+        calibration.s_snv,
+        calibration.knots().len(),
+        calibration.knots()[0].0,
+        calibration.knots()[calibration.knots().len() - 1].0
+    );
+    Ok(())
 }
 
 /// The scaling of mutation probabilities for `enumerate` and `classify`:
@@ -91,6 +178,9 @@ fn main() -> Result<()> {
         .about("Determine genes enriched with de-novo mutations")
         .after_help("If no --action is given, all actions are executed.\n\
                      Possible actions are: transform, enumerate, expect, sample, classify, compare\n\
+                     \n\
+                     --action calibrate fits --calibration for population data with --allele-numbers on the\n\
+                     possible synonymous mutations and the --observed-mutations (see the README).\n\
                      \n\
                      --action possible_mutations is not part of the pipeline: it writes every possible\n\
                      mutation (chr, position, ref, alt, transcript, mutation type, sequence context) to\n\
@@ -189,8 +279,24 @@ fn main() -> Result<()> {
         .arg(Arg::with_name("calibration")
              .long("--calibration")
              .value_name("FILE")
-             .help("Scaling factors and allele-number dependence of the mutation probabilities (instead of --scaling-factor); needs --allele-numbers if it depends on allele numbers")
+             .help("Scaling factors and allele-number dependence of the mutation probabilities (instead of --scaling-factor); needs --allele-numbers if it depends on allele numbers. Output of --action calibrate")
              .conflicts_with("scaling-factor")
+             .takes_value(true))
+        .arg(Arg::with_name("calibration-diagnostics")
+             .long("--calibration-diagnostics")
+             .value_name("FILE")
+             .help("With --action calibrate: observed and expected counts with the fitted calibration, by allele number and by rate (default: <calibration>.diagnostics.tsv)")
+             .takes_value(true))
+        .arg(Arg::with_name("calibration-bins")
+             .long("--calibration-bins")
+             .value_name("NUMBER")
+             .help("With --action calibrate: number of allele-number bins for h")
+             .default_value("25")
+             .takes_value(true))
+        .arg(Arg::with_name("calibration-ids")
+             .long("--calibration-ids")
+             .value_name("FILE")
+             .help("With --action calibrate: only use the transcripts listed in this file (one ID per line), e.g. canonical transcripts")
              .takes_value(true))
         .arg(Arg::with_name("min-an")
              .long("--min-an")
@@ -310,8 +416,12 @@ fn main() -> Result<()> {
         }
     };
 
+    // (only classify reads the observed mutations into memory; calibrate
+    // streams them)
     let observed_mutations = {
-        if let Some(observed_mutations_file) = matches.value_of("observed-mutations") {
+        if !(run_all || matches.value_of("action") == Some("classify")) {
+            None
+        } else if let Some(observed_mutations_file) = matches.value_of("observed-mutations") {
             Some(read_observed_mutations_from_file(
                 observed_mutations_file,
                 -1,
@@ -358,6 +468,13 @@ fn main() -> Result<()> {
     };
 
     
+    //action=calibrate
+    if matches.value_of("action") == Some("calibrate") {
+        eprintln!("calibrate");
+        run_calibrate(&matches, &regions, &ref_genome, &papa, id)?;
+        return Ok(());
+    }
+
     //action=enumerate
     let possible_mutations = {
         if run_all || matches.value_of("action") == Some("enumerate") {

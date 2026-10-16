@@ -318,3 +318,74 @@ fn option_errors() {
         assert!(!run(&args).status.success(), "{:?} should fail", extra);
     }
 }
+
+#[test]
+fn calibrate_then_enumerate_reproduces_the_observed_synonymous_count() {
+    let dir = out_dir("genovo_an_calibrate");
+    let an = write_allele_numbers(&dir, "an.tsv", |_| Some(100_000));
+    let calibration = dir.join("calibration.tsv");
+    let mut args = vec![
+        "--action", "calibrate", "--gff3", GFF3, "--genome", GENOME, "--id", ID,
+        "--observed-mutations", OBSERVED, "--allele-numbers", p(&an), "--calibration",
+        p(&calibration),
+    ];
+    args.extend(model());
+    let log = genovo(&args);
+    assert!(log.contains("S = "), "{}", log);
+    let text = fs::read_to_string(&calibration).unwrap();
+    assert!(text.starts_with("# genovo calibration v1\n# S_snv\t"), "{}", text);
+    assert!(text.contains("# source\tgenovo"), "{}", text);
+    // one allele number: one bin with h = 1
+    assert!(text.ends_with("an\th\n100000\t1\n"), "{}", text);
+
+    // diagnostics: the fitted bin reproduces the observed count
+    let diagnostics = fs::read_to_string(dir.join("calibration.tsv.diagnostics.tsv")).unwrap();
+    let all = diagnostics
+        .lines()
+        .find(|l| l.starts_with("by_an\t1\t") && l.contains("\tall\t"))
+        .unwrap();
+    let f: Vec<&str> = all.split('\t').collect();
+    let (observed, expected): (f64, f64) = (f[8].parse().unwrap(), f[9].parse().unwrap());
+    assert!(observed >= 1.0);
+    assert!((observed - expected).abs() < 1e-6 * observed, "{}", all);
+    assert!(diagnostics.contains("by_rate_high_an"));
+
+    // enumerate + expect with the calibration: expected synonymous = observed
+    let o = run_all(
+        &out_dir("genovo_an_calibrated_run"),
+        &["--calibration", p(&calibration), "--allele-numbers", p(&an)],
+    );
+    let synonymous = o
+        .results
+        .lines()
+        .find(|l| l.starts_with(&format!("{}\tsynonymous\t", ID)))
+        .unwrap();
+    let f: Vec<&str> = synonymous.split('\t').collect();
+    let (obs, exp): (f64, f64) = (f[2].parse().unwrap(), f[3].parse().unwrap());
+    assert_eq!(obs, observed);
+    assert!((exp - obs).abs() < 1e-5 * obs, "{}", synonymous);
+}
+
+#[test]
+fn calibrate_needs_its_inputs() {
+    let dir = out_dir("genovo_an_calibrate_errors");
+    let an = write_allele_numbers(&dir, "an.tsv", |_| Some(100_000));
+    let out = dir.join("c.tsv");
+    let base = ["--action", "calibrate", "--gff3", GFF3, "--genome", GENOME, "--id", ID];
+    for (missing, extra) in [
+        ("allele-numbers", vec!["--observed-mutations", OBSERVED, "--calibration", p(&out)]),
+        ("observed-mutations", vec!["--allele-numbers", p(&an), "--calibration", p(&out)]),
+        ("calibration", vec!["--allele-numbers", p(&an), "--observed-mutations", OBSERVED]),
+    ] {
+        let mut args = base.to_vec();
+        args.extend(model());
+        args.extend(&extra);
+        let o = run(&args);
+        assert!(!o.status.success());
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains(missing),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+}

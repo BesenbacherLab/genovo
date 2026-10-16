@@ -1,9 +1,11 @@
 # Design note: per-site allele numbers and scaling-factor calibration
 
-Status: proposal, 2026-10-11. Implemented so far (§8): steps 1–3
+Status: proposal, 2026-10-11. Implemented so far (§8): steps 1–4
 (2026-10-16): `src/allele_numbers.rs`, `--regions-bed`, `src/scaling.rs`,
-and `--allele-numbers`, `--calibration`, `--min-an` for `enumerate` and
-`classify` (tests in `tests/allele_numbers.rs`).
+`--allele-numbers`, `--calibration`, `--min-an` for `enumerate` and
+`classify`, and `--action calibrate` (`src/calibrate.rs`; tests in
+`tests/allele_numbers.rs`). Indels (step 6) are not calibrated yet:
+`S_indel = S_snv`.
 
 ## 1. Goal
 
@@ -334,7 +336,15 @@ indels. It does not today, because indels are only enumerated inside CDSs.
    are unchanged without AN; with a synthetic AN file, masked sites disappear
    from both sides.
 4. `calibrate` action with diagnostics (§5, §7). Test on simulated data:
-   draw `y_i` from a known `S` and `h`, check that they are recovered.
+   draw `y_i` from a known `S` and `h`, check that they are recovered. Done:
+   400,000 simulated units recover `S` within 1 % and `h` within 0.02 (20
+   bins). Knots are at the median allele number of each (merged) bin. The
+   diagnostics file has one row per (table, bin, class), with tables `by_an`
+   (the fitted bins) and `by_rate_low_an` / `by_rate_high_an` (rate deciles
+   below / above the median allele number). On chr22 (466,154 synonymous
+   units) calibration takes 7 s; with the DDD de novo mutations as "observed"
+   variants it gives `S` = 7,810 (36 observed), close to the 8,586 = 2 ×
+   trios used for those data.
 5. Workflow: download and prepare the AN files, calibrate, run genovo per
    transcript on the cluster, make the diagnostic plots.
 6. Indel calibration (§6.3), after looking at the SNV results.

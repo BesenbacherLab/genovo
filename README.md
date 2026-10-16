@@ -289,6 +289,30 @@ design is described in `docs/design/allele-number-scaling.md`.
 * `--min-an N`: also leave out sites with an allele number below `N`
   (overrides `n_min` of the calibration).
 
+**Fitting the calibration** (`--action calibrate`): `S` and `h` are fitted on
+the possible synonymous point mutations (each site and alternative base once)
+and the observed variants (`--observed-mutations`, e.g. all variants of the
+population data set; indels are ignored):
+
+```
+genovo --action calibrate --gff3 annotation.gff3.gz --genome genome.2bit \
+    --point-mutation-probabilities SNV_mutation_rate_model.txt \
+    --allele-numbers allele_numbers.tsv.gz --observed-mutations variants.txt \
+    --calibration calibration.tsv [--min-an N] [--calibration-bins 25] \
+    [--calibration-ids canonical_transcripts.txt]
+```
+
+The sites are split into bins of allele numbers; in each bin, the scaling is
+chosen so that the expected number of observed variants equals the observed
+number. Bins are merged where this would make `h` decrease, `S` is the scaling
+of the best-covered bin, and `h` of each bin is its scaling divided by `S`.
+`S_indel` is not fitted (it is set to `S_snv`; edit the file if needed).
+Diagnostics (observed and expected counts with the fitted calibration, by
+allele-number bin and by mutation-rate decile, for all sites and separately
+for CpG transitions, other transitions and transversions) are written to
+`<calibration>.diagnostics.tsv` (or `--calibration-diagnostics FILE`); the
+observed/expected ratio should be close to 1 everywhere.
+
 The allele number file is read once per run, keeping only the sites in the
 transcripts. A genome-wide file takes several minutes to read, so for many runs
 (e.g. one per transcript with `--id`) restrict it beforehand to the BED file

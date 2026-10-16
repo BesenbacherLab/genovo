@@ -129,7 +129,6 @@ impl Calibration {
         !self.knots.is_empty() || self.n_min > 0
     }
 
-    #[allow(dead_code)] // for --action calibrate (step 4)
     pub fn knots(&self) -> &[(u32, f64)] {
         &self.knots
     }
@@ -258,7 +257,6 @@ impl Calibration {
         Ok(c)
     }
 
-    #[allow(dead_code)] // for --action calibrate (step 4)
     pub fn write<W: Write>(&self, mut out: W) -> Result<()> {
         writeln!(out, "{}", FORMAT_LINE)?;
         writeln!(out, "# S_snv\t{:e}", self.s_snv)?;
@@ -275,7 +273,6 @@ impl Calibration {
         Ok(())
     }
 
-    #[allow(dead_code)] // for --action calibrate (step 4)
     pub fn write_to_file(&self, path: &str) -> Result<()> {
         let out = get_writer(path)
             .with_context(|| format!("failed to open file {} for writing", path))?;
