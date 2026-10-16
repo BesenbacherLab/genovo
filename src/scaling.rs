@@ -12,10 +12,6 @@
 //! point mutations and indels) and `h` the relative effective sample size,
 //! read from a calibration file. Sites with `n < n_min` are masked. Without a
 //! calibration, `h ≡ 1` and `S = --scaling-factor`, as before.
-//!
-//! Step 2 of the implementation plan: `enumerate` uses [`scale_probability`];
-//! the calibration and per-site scaling are used from step 3 on.
-#![allow(dead_code)]
 
 use std::convert::TryFrom;
 use std::io::{BufRead, BufReader, Write};
@@ -133,12 +129,15 @@ impl Calibration {
         !self.knots.is_empty() || self.n_min > 0
     }
 
+    #[allow(dead_code)] // for --action calibrate (step 4)
     pub fn knots(&self) -> &[(u32, f64)] {
         &self.knots
     }
 
+    /// Whether a site with allele number `n` is masked: not callable
+    /// (`n = 0`) or `n < n_min`.
     pub fn is_masked(&self, n: u32) -> bool {
-        n < self.n_min
+        n == 0 || n < self.n_min
     }
 
     /// Relative effective sample size at a site with allele number `n` (not
@@ -259,6 +258,7 @@ impl Calibration {
         Ok(c)
     }
 
+    #[allow(dead_code)] // for --action calibrate (step 4)
     pub fn write<W: Write>(&self, mut out: W) -> Result<()> {
         writeln!(out, "{}", FORMAT_LINE)?;
         writeln!(out, "# S_snv\t{:e}", self.s_snv)?;
@@ -275,6 +275,7 @@ impl Calibration {
         Ok(())
     }
 
+    #[allow(dead_code)] // for --action calibrate (step 4)
     pub fn write_to_file(&self, path: &str) -> Result<()> {
         let out = get_writer(path)
             .with_context(|| format!("failed to open file {} for writing", path))?;
@@ -292,6 +293,7 @@ pub struct SiteScaling {
 
 impl SiteScaling {
     /// Today's behaviour: one factor for all mutations.
+    #[allow(dead_code)]
     pub fn uniform(scaling_factor: f64) -> Self {
         SiteScaling {
             calibration: Calibration::uniform(scaling_factor),
@@ -309,6 +311,7 @@ impl SiteScaling {
         })
     }
 
+    #[allow(dead_code)]
     pub fn calibration(&self) -> &Calibration {
         &self.calibration
     }
@@ -509,8 +512,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn site_scaling() {
+    fn needed_sites() -> NeededSites {
         let ann = SeqAnnotation::new(
             "T".to_string(),
             "chr1".to_string(),
@@ -519,7 +521,12 @@ mod tests {
             vec![Interval::new(100, 200).unwrap()],
             vec![CDS::new(Interval::new(100, 200).unwrap(), Phase::Zero)],
         );
-        let needed = NeededSites::from_annotations(&[ann], false);
+        NeededSites::from_annotations(&[ann], false)
+    }
+
+    #[test]
+    fn site_scaling() {
+        let needed = needed_sites();
         // 1-based positions 101..103: AN 500 (masked), 2000, 8000; 104 missing (0)
         let an = AlleleNumbers::read(
             "chr1\t101\t500\nchr1\t102\t2000\nchr1\t103\t8000\n".as_bytes(),
@@ -539,6 +546,14 @@ mod tests {
             Some(scale_probability(r, 1e7))
         );
         assert!(s.is_masked("chr1", 100) && !s.is_masked("chr1", 102));
+        // allele numbers without a calibration: only non-callable sites are masked
+        let an = AlleleNumbers::read("chr1\t101\t500\n".as_bytes(), &needed_sites()).unwrap();
+        let m = SiteScaling::new(Calibration::uniform(8586.0), Some(an)).unwrap();
+        assert!(!m.is_masked("chr1", 100) && m.is_masked("chr1", 101));
+        assert_eq!(
+            m.probability(r, VariantClass::PointMutation, "chr1", 100),
+            Some(scale_probability(r, 8586.0))
+        );
         // without allele numbers: the old behaviour
         let u = SiteScaling::uniform(8586.0);
         assert_eq!(

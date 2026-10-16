@@ -1,8 +1,9 @@
 # Design note: per-site allele numbers and scaling-factor calibration
 
-Status: proposal, 2026-10-11. Implemented so far (§8): step 1 (2026-10-16,
-`src/allele_numbers.rs`, `--regions-bed`) and step 2 (2026-10-16,
-`src/scaling.rs`).
+Status: proposal, 2026-10-11. Implemented so far (§8): steps 1–3
+(2026-10-16): `src/allele_numbers.rs`, `--regions-bed`, `src/scaling.rs`,
+and `--allele-numbers`, `--calibration`, `--min-an` for `enumerate` and
+`classify` (tests in `tests/allele_numbers.rs`).
 
 ## 1. Goal
 
@@ -121,7 +122,8 @@ chr1    10002   78
   lines are skipped. Plain text or gzip/bgzip (`flate2::MultiGzDecoder`).
 - Unsorted input (a position not after the previous one, or a chromosome
   appearing again later) is an error.
-- Sites missing from the file have `an = 0`: not callable.
+- Sites missing from the file have `an = 0`: not callable, and always masked
+  when an allele number file is given (also with `n_min = 0`).
 - Chromosome names must match the 2bit genome and the regions file.
 - genovo streams the file once and keeps only the positions where it
   enumerates possible mutations: exons, plus the splice-site bases in the

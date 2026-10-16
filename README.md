@@ -168,6 +168,10 @@ The numeric mutation type is defined in the section [Mutation type numeric code 
 |--point-mutation-probabilities|input  |A pattern partition file with the sequence-context-dependent point mutation probabilities|
 |--indel-mutation-probabilities|input  |A pattern partition file with the sequence-context-dependent indel probabilities|
 |--possible-mutations          |output |The possible mutations for each transcript|
+|--scaling-factor              |number |Scaling of the per-generation probabilities r to 1 − (1 − r)^s (default 1), e.g. 2 × the number of trios for de novo mutations|
+|--allele-numbers              |input (optional)|Per-site allele numbers, see [Uneven coverage](#uneven-coverage-per-site-allele-numbers)|
+|--calibration                 |input (optional)|Instead of `--scaling-factor`: scaling that depends on the allele number|
+|--min-an                      |number (optional)|Leave out sites with a smaller allele number|
 
 
 #### classify
@@ -195,6 +199,7 @@ The fourth column is the new base that was mutated into.
 |--genome              |input |A twobit reference genome sequence file|
 |--genomic-regions     |input |A transformed version of the GFF3 entries, limited to transcripts, exons and CDS regions|
 |--classified-mutations|output|The observed mutatations. But annotated with numeric mutation types|
+|--allele-numbers, --min-an|input (optional)|Leave out observed mutations at the sites that `enumerate` leaves out (give the same values to both steps)|
 
 #### expect
 
@@ -246,6 +251,48 @@ And note that the p-values does not take into account the expected number of mut
 |--significant-mutations |output|A table of observed, expected, sampled and a p-value for different mutation types.|
 |--seed                  |integer|Seed for the random pairing of samples when combining LoF types (optional, see `sample`)|
 
+
+#### Uneven coverage: per-site allele numbers
+
+For population data with uneven coverage (e.g. exomes), the probability of
+observing a mutation depends on how many chromosomes were called at its site.
+`enumerate` then computes the probability of a mutation with per-generation
+rate r at a site with allele number n as 1 − (1 − r)^(S · h(n)), and
+`classify` leaves out the observed mutations at the same masked sites. The
+design is described in `docs/design/allele-number-scaling.md`.
+
+* `--allele-numbers FILE`: the number of called chromosomes at each site,
+  tab-separated, 1-based, sorted by chromosome and position, either as
+  `chrom pos an` or as `chrom:pos an` (the layout of the gnomAD v4.1
+  all-sites AN files), plain or gzip/bgzip-compressed, with an optional header.
+  Sites that are not in the file are not callable and are left out of both
+  expected and observed counts. For indels, the allele number of the base
+  after the insertion/deletion point is used. To combine several data sets
+  (e.g. gnomAD exomes and genomes), add up their allele numbers per site
+  beforehand.
+* `--calibration FILE`: the scaling factors `S` (separately for point
+  mutations and indels) and the relative effective sample size `h(n)`
+  (linear between the listed allele numbers, constant outside them), in this
+  format:
+
+  ```
+  # genovo calibration v1
+  # S_snv	2.2e7
+  # S_indel	1.9e7
+  # n_min	50000
+  an	h
+  50000	0.081
+  1612000	1
+  ```
+
+  Without `--calibration`, `S = --scaling-factor` and `h = 1`.
+* `--min-an N`: also leave out sites with an allele number below `N`
+  (overrides `n_min` of the calibration).
+
+The allele number file is read once per run, keeping only the sites in the
+transcripts. A genome-wide file takes several minutes to read, so for many runs
+(e.g. one per transcript with `--id`) restrict it beforehand to the BED file
+written by `--action transform --regions-bed FILE`.
 
 #### possible_mutations
 

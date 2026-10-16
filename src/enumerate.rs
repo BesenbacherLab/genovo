@@ -4,14 +4,15 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use anyhow::{Context, Result};
 
 use mutexpect::{
-    for_each_possible_mutation, possible_mutations, Alteration, MutationEvent, SeqAnnotation,
+    for_each_possible_mutation, possible_mutations_by_position, Alteration, MutationEvent,
+    SeqAnnotation,
 };
 use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
 use twobit::TwoBitFile;
 
 use crate::error::ParseError;
 use crate::io::{get_reader, get_writer};
-use crate::scaling::scale_probability;
+use crate::scaling::{SiteScaling, VariantClass};
 use crate::{Float, MutationType};
 
 type PossibleMutations = HashMap<String, Vec<MutationEvent>>;
@@ -21,7 +22,7 @@ pub fn enumerate_possible_mutations(
     ref_genome: &TwoBitFile,
     mutation_rates: &PaPaPred,
     indel_mutation_rates: &Option<PaPaPredIndel>,
-    scaling_factor: f32,
+    scaling: &SiteScaling,
     drop_nan: bool,
     filter_for_id: Option<&str>,
     include_intronic : bool,
@@ -29,6 +30,7 @@ pub fn enumerate_possible_mutations(
     filter_plof : bool,
 ) -> Result<PossibleMutations> {
     let mut result = HashMap::new();
+    let mut masked = 0usize;
     let radius = mutation_rates.radius();
     for annotation in annotations {
         if let Some(id) = filter_for_id {
@@ -46,11 +48,18 @@ pub fn enumerate_possible_mutations(
                 continue;
             }
         };
-        match possible_mutations(&seq, &annotation, mutation_rates, indel_mutation_rates, drop_nan, include_intronic, include_unknown, filter_plof) {
-            Ok(mut mutations) => {
-                for mutation in &mut mutations {
-                    mutation.probability =
-                        scale_probability(mutation.probability as f64, scaling_factor as f64) as f32;
+        match possible_mutations_by_position(&seq, &annotation, mutation_rates, indel_mutation_rates, drop_nan, include_intronic, include_unknown, filter_plof) {
+            Ok(events) => {
+                let mut mutations = Vec::with_capacity(events.len());
+                for (position, mut event) in events {
+                    let class = VariantClass::from(event.mutation_type);
+                    match scaling.probability(event.probability as f64, class, &annotation.chr, position) {
+                        Some(p) => {
+                            event.probability = p as f32;
+                            mutations.push(event);
+                        }
+                        None => masked += 1,
+                    }
                 }
                 result.insert(annotation.name.clone(), mutations);
             }
@@ -63,6 +72,12 @@ pub fn enumerate_possible_mutations(
         }
     }
 
+    if masked > 0 {
+        eprintln!(
+            "[INFO] {} possible mutations at masked sites (allele number 0 or below the minimum) left out",
+            masked
+        );
+    }
     Ok(result)
 }
 

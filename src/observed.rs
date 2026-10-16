@@ -14,6 +14,7 @@ use crate::compare::tally_up_observed_mutations;
 use crate::counts::ObservedMutationCounts;
 use crate::error::ParseError;
 use crate::io::{get_reader, get_writer};
+use crate::scaling::SiteScaling;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Mutation {
@@ -140,8 +141,10 @@ pub fn classify_mutations(
     genome: &TwoBitFile,
     filter_for_id: Option<&str>,
     filter_plof : bool,
+    scaling: &SiteScaling,
 ) -> Result<Vec<Mutation>> {
     let mut result = Vec::new();
+    let mut masked = 0usize;
 
     let flank = 2; // number of flanking bases left and right needed to classify all coding point mutations
 
@@ -166,6 +169,17 @@ pub fn classify_mutations(
         let mut relevant_mutations =
             filter_observed_mutations(&observed_mutations, &annotation.chr, annotation.range);
         for mutation in &mut relevant_mutations {
+            // The allele number of a point mutation is that of its site; for an
+            // indel (VCF anchor at `position`) that of the base after the anchor,
+            // as in `enumerate`.
+            let site = match mutation.change {
+                Change::PointMutation(_, _) => mutation.position,
+                Change::Indel(_, _) => mutation.position + 1,
+            };
+            if scaling.is_masked(&annotation.chr, site) {
+                masked += 1;
+                continue;
+            }
             let sequence_context: Vec<char> = {
                 assert!(annotation.range.start <= mutation.position);
                 let middle = mutation.position - annotation.range.start + flank;
@@ -215,6 +229,12 @@ pub fn classify_mutations(
             }
             result.push(classified_mutation);
         }
+    }
+    if masked > 0 {
+        eprintln!(
+            "[INFO] {} observed mutations at masked sites (allele number 0 or below the minimum) left out",
+            masked
+        );
     }
     Ok(result)
 }

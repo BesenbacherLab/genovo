@@ -22,7 +22,8 @@ const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 type Float = f32;
 type MutationType = mutexpect::MutationType;
 
-use crate::allele_numbers::NeededSites;
+use crate::allele_numbers::{AlleleNumbers, NeededSites};
+use crate::scaling::{Calibration, SiteScaling};
 use crate::compare::compare_mutations;
 use crate::enumerate::enumerate_possible_mutations;
 use crate::enumerate::write_possible_mutations;
@@ -40,6 +41,47 @@ fn require_initialization<'a, T>(
         Some(v) => Ok(v),
         None => Err(MissingCommandLineArgumentError::new(cli_argument)),
     }
+}
+
+/// The scaling of mutation probabilities for `enumerate` and `classify`:
+/// `--scaling-factor`, or `--calibration`, with `--allele-numbers` and
+/// `--min-an`. Read once and kept for the rest of the run.
+fn site_scaling(
+    matches: &clap::ArgMatches,
+    regions: &Option<Vec<mutexpect::SeqAnnotation>>,
+    include_intronic: bool,
+    scaling_factor: f32,
+) -> Result<&'static SiteScaling> {
+    static CELL: std::sync::OnceLock<SiteScaling> = std::sync::OnceLock::new();
+    if let Some(s) = CELL.get() {
+        return Ok(s);
+    }
+    let mut calibration = match matches.value_of("calibration") {
+        Some(file) => Calibration::read_from_file(file)?,
+        None => Calibration::uniform(scaling_factor as f64),
+    };
+    if let Some(min_an) = matches.value_of("min-an") {
+        calibration.n_min = min_an
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--min-an must be a non-negative integer, got {}", min_an))?;
+    }
+    let allele_numbers = match matches.value_of("allele-numbers") {
+        Some(file) => {
+            let regions = require_initialization(regions, "--genomic-regions or --gff3")?;
+            let needed = NeededSites::from_annotations(regions, include_intronic);
+            let an = AlleleNumbers::read_from_file(file, &needed)?;
+            eprintln!(
+                "[INFO] allele numbers for {} of {} needed sites read from {}",
+                an.len(),
+                needed.len(),
+                file
+            );
+            Some(an)
+        }
+        None => None,
+    };
+    let scaling = SiteScaling::new(calibration, allele_numbers)?;
+    Ok(CELL.get_or_init(|| scaling))
 }
 
 fn main() -> Result<()> {
@@ -138,6 +180,23 @@ fn main() -> Result<()> {
              .value_name("NAME")
              .help("Scaling factor for all mutation probabilities")
              .default_value("1.0")
+             .takes_value(true))
+        .arg(Arg::with_name("allele-numbers")
+             .long("--allele-numbers")
+             .value_name("FILE")
+             .help("Number of called chromosomes at each site (tab-separated 'chrom pos an' or 'chrom:pos an', 1-based, sorted). Sites that are not in the file are not callable and are left out of expected and observed counts")
+             .takes_value(true))
+        .arg(Arg::with_name("calibration")
+             .long("--calibration")
+             .value_name("FILE")
+             .help("Scaling factors and allele-number dependence of the mutation probabilities (instead of --scaling-factor); needs --allele-numbers if it depends on allele numbers")
+             .conflicts_with("scaling-factor")
+             .takes_value(true))
+        .arg(Arg::with_name("min-an")
+             .long("--min-an")
+             .value_name("NUMBER")
+             .help("With --allele-numbers: leave out sites with a smaller allele number from expected and observed counts (overrides the minimum in --calibration)")
+             .requires("allele-numbers")
              .takes_value(true))
         .arg(Arg::with_name("sum-up-observed-mutations-per-transcript")
              .long("--sum-up-observed-mutations-per-transcript")
@@ -308,7 +367,7 @@ fn main() -> Result<()> {
                 require_initialization(&ref_genome, "--genome")?,
                 require_initialization(&papa, "--point-mutation-probabilities")?,
                 &papa_indel,
-                scaling_factor,
+                site_scaling(&matches, &regions, include_intronic, scaling_factor)?,
                 true,
                 id,
                 include_intronic,
@@ -416,6 +475,7 @@ fn main() -> Result<()> {
                 require_initialization(&ref_genome, "--genome")?,
                 id,
                 filter_plof,
+                site_scaling(&matches, &regions, include_intronic, scaling_factor)?,
             )?;
 
             if let Some(classified_mutations_file) = matches.value_of("classified-mutations") {
