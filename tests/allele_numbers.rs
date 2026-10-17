@@ -2,6 +2,7 @@
 //! (see `docs/design/allele-number-scaling.md`), for one transcript with
 //! observed LoF mutations, using synthetic allele numbers.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -59,6 +60,13 @@ fn genovo(args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stderr).unwrap()
+}
+
+/// Run genovo, which must succeed; returns STDOUT.
+fn stdout(args: &[&str]) -> String {
+    let out = run(args);
+    assert!(out.status.success(), "genovo {:?} failed:\n{}", args, String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap()
 }
 
 fn p(path: &Path) -> &str {
@@ -388,4 +396,81 @@ fn calibrate_needs_its_inputs() {
             String::from_utf8_lossy(&o.stderr)
         );
     }
+}
+
+/// Sum of the probabilities of `--action possible_mutations` per mutation
+/// type, with the column names of the expected-mutations file.
+fn summed_site_probabilities(sites: &str) -> BTreeMap<String, f64> {
+    let mut sums = BTreeMap::new();
+    for line in sites.lines() {
+        let f: Vec<&str> = line.split('\t').collect();
+        assert_eq!(f.len(), 8, "{}", line);
+        assert_eq!(f[4], ID);
+        let name = match f[5] {
+            "Unknown" => "unknown",
+            "Synonymous" => "synonymous",
+            "Missense" => "missense",
+            "Nonsense" => "nonsense",
+            "StartCodon" => "start_codon",
+            "StopLoss" => "stop_loss",
+            "SpliceSite" => "splice_site",
+            "Intronic" => "intronic",
+            "InFrameIndel" => "inframe_indel",
+            "FrameshiftIndel" => "frameshift_indel",
+            t => panic!("unknown type {}", t),
+        };
+        let p: f64 = f[7].parse().unwrap();
+        assert!(p > 0.0 && p < 1.0, "{}", line);
+        *sums.entry(name.to_string()).or_insert(0.0) += p;
+    }
+    sums
+}
+
+#[test]
+fn possible_mutation_probabilities_sum_to_the_expected_counts() {
+    let dir = out_dir("genovo_an_site_probabilities");
+    // allele numbers that vary from site to site, some masked
+    let an = write_allele_numbers(&dir, "an.tsv", |pos| match pos % 7 {
+        0 => None,
+        1 => Some(50),
+        k => Some(1000 * k as u32),
+    });
+    let calibration = dir.join("calibration.tsv");
+    fs::write(
+        &calibration,
+        "# genovo calibration v1\n# S_snv\t5000\n# S_indel\t3000\n# n_min\t100\nan\th\n1000\t0.2\n6000\t1\n",
+    )
+    .unwrap();
+    for plof in [false, true] {
+        let mut extra = vec!["--calibration", p(&calibration), "--allele-numbers", p(&an)];
+        if plof {
+            extra.push("--filter-plof");
+        }
+        let o = run_all(&out_dir(&format!("genovo_an_site_probabilities_{}", plof)), &extra);
+        let mut args = vec!["--action", "possible_mutations", "--gff3", GFF3, "--genome", GENOME, "--id", ID];
+        args.extend(model());
+        args.extend(&extra);
+        let sums = summed_site_probabilities(&stdout(&args));
+
+        let mut lines = o.expected.lines();
+        let header: Vec<&str> = lines.next().unwrap().split('\t').collect();
+        let values: Vec<&str> = lines.next().unwrap().split('\t').collect();
+        assert_eq!(values[0], ID);
+        for (name, value) in header.iter().zip(&values).skip(1) {
+            let expected: f64 = value.parse().unwrap();
+            let summed = sums.get(*name).copied().unwrap_or(0.0);
+            assert!(
+                (expected - summed).abs() <= 1e-5 * expected.max(1e-12),
+                "filter_plof={} {}: expected {} but the sites sum to {}",
+                plof,
+                name,
+                expected,
+                summed
+            );
+        }
+        assert!(sums["nonsense"] > 0.0 && sums["frameshift_indel"] > 0.0);
+    }
+    // Without a model: no probability column, the masked sites are kept.
+    let without = stdout(&["--action", "possible_mutations", "--gff3", GFF3, "--genome", GENOME, "--id", ID]);
+    assert!(without.lines().all(|l| l.split('\t').count() == 7));
 }

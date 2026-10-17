@@ -27,7 +27,7 @@ use crate::allele_numbers::{AlleleNumbers, NeededSites};
 use crate::scaling::{Calibration, SiteScaling};
 use crate::compare::compare_mutations;
 use crate::enumerate::enumerate_possible_mutations;
-use crate::enumerate::write_possible_mutations;
+use crate::enumerate::{write_possible_mutations, SiteProbabilities};
 use crate::error::MissingCommandLineArgumentError;
 use crate::expect::expected_number_of_mutations;
 use crate::observed::classify_mutations;
@@ -185,7 +185,10 @@ fn main() -> Result<()> {
                      --action possible_mutations is not part of the pipeline: it writes every possible\n\
                      mutation (chr, position, ref, alt, transcript, mutation type, sequence context) to\n\
                      STDOUT. It needs --genome and --gff3 or --genomic-regions; the context has the\n\
-                     k-mer size of --point-mutation-probabilities if given (otherwise 9).\n\
+                     k-mer size of --point-mutation-probabilities if given (otherwise 9). With\n\
+                     --point-mutation-probabilities, an eighth column has the probability of each\n\
+                     mutation as in enumerate (with --scaling-factor or --calibration and\n\
+                     --allele-numbers), and mutations that enumerate leaves out are not written.\n\
                      \n\
                      Progress messages are written to STDERR." )
         .arg(Arg::with_name("action")
@@ -512,6 +515,15 @@ fn main() -> Result<()> {
     if matches.value_of("action") == Some("possible_mutations") {
         eprintln!("possible_mutations");
         let radius = papa.as_ref().map_or(4, |p| p.radius());
+        // with a point mutation model: also the probability of each mutation
+        let probabilities = match &papa {
+            Some(point) => Some(SiteProbabilities {
+                point,
+                indel: &papa_indel,
+                scaling: site_scaling(&matches, &regions, include_intronic, scaling_factor)?,
+            }),
+            None => None,
+        };
         let stdout = std::io::stdout();
         write_possible_mutations(
             std::io::BufWriter::new(stdout.lock()),
@@ -522,6 +534,7 @@ fn main() -> Result<()> {
             include_intronic,
             include_unknown,
             filter_plof,
+            probabilities.as_ref(),
         )?;
         return Ok(());
     };

@@ -98,9 +98,24 @@ fn annotation_sequence(
     Ok(ref_genome.sequence(&annotation.chr, start, stop)?)
 }
 
+/// The mutation rate models and per-site scaling used to add a probability
+/// column to [`write_possible_mutations`].
+pub struct SiteProbabilities<'a> {
+    pub point: &'a PaPaPred,
+    pub indel: &'a Option<PaPaPredIndel>,
+    pub scaling: &'a SiteScaling,
+}
+
 /// Write every possible mutation of the annotated regions as a tab-separated
 /// line: chromosome, 1-based position, reference base, alternative, transcript
 /// ID, mutation type and the sequence context of `2 * radius + 1` bases.
+///
+/// With `probabilities`, an eighth column holds the probability of the
+/// mutation as in `enumerate` (after `--scaling-factor` or `--calibration`
+/// and the allele numbers), and the mutations that `enumerate` leaves out are
+/// not written: those at masked sites, with an undefined (NaN) rate, and
+/// indels without an indel model. Summing the probabilities per transcript and
+/// mutation type gives the expected numbers of `expect`.
 ///
 /// Point mutations: the position and reference base of the mutated site, and
 /// the new base. Indels are written as in VCF and in the observed-mutations
@@ -117,7 +132,9 @@ pub fn write_possible_mutations<W: Write>(
     include_intronic: bool,
     include_unknown: bool,
     filter_plof: bool,
+    probabilities: Option<&SiteProbabilities>,
 ) -> Result<()> {
+    let mut masked = 0usize;
     for annotation in annotations {
         if let Some(id) = filter_for_id {
             if annotation.name != id {
@@ -142,7 +159,51 @@ pub fn write_possible_mutations<W: Write>(
             include_unknown,
             filter_plof,
             |site| -> Result<()> {
+                let point_rates = match probabilities {
+                    Some(p) => Some(p.point.rates(site.seq_window).with_context(|| {
+                        format!("bad sequence {} in {}", site.seq_window, annotation.name)
+                    })?),
+                    None => None,
+                };
+                let mut indel_rates = None;
                 for m in site.mutations {
+                    let probability = match (probabilities, &point_rates) {
+                        (Some(p), Some(rates)) => {
+                            let rate = match m.alteration {
+                                Alteration::Point(base) => rates.by_name(base.name()),
+                                Alteration::InFrameIndel | Alteration::FrameshiftIndel => {
+                                    let model = match p.indel {
+                                        Some(model) => model,
+                                        None => continue, // as enumerate
+                                    };
+                                    if indel_rates.is_none() {
+                                        let w = site.seq_window;
+                                        indel_rates = Some(model.rates(&w[0..w.len() - 1]).with_context(|| {
+                                            format!("bad sequence {} in {}", w, annotation.name)
+                                        })?);
+                                    }
+                                    let r = indel_rates.as_ref().expect("set above");
+                                    if m.alteration == Alteration::InFrameIndel {
+                                        r.inframe
+                                    } else {
+                                        r.outframe
+                                    }
+                                }
+                            };
+                            if rate.is_nan() {
+                                continue; // as enumerate (drop_nan)
+                            }
+                            let class = VariantClass::from(m.mutation_type);
+                            match p.scaling.probability(rate as f64, class, &annotation.chr, site.genomic_position) {
+                                Some(probability) => Some(probability as f32),
+                                None => {
+                                    masked += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
                     // 1-based position and reference base of the written site
                     let (position, ref_base, alt) = match m.alteration {
                         Alteration::Point(base) => (
@@ -162,7 +223,7 @@ pub fn write_possible_mutations<W: Write>(
                             (site.genomic_position, anchor, format!("{}{}", anchor, n))
                         }
                     };
-                    writeln!(
+                    write!(
                         out,
                         "{}\t{}\t{}\t{}\t{}\t{:?}\t{}",
                         annotation.chr,
@@ -173,12 +234,22 @@ pub fn write_possible_mutations<W: Write>(
                         m.mutation_type,
                         site.seq_window
                     )?;
+                    match probability {
+                        Some(p) => writeln!(out, "\t{:e}", p)?,
+                        None => writeln!(out)?,
+                    }
                 }
                 Ok(())
             },
         )?;
     }
     out.flush()?;
+    if masked > 0 {
+        eprintln!(
+            "[INFO] {} possible mutations at masked sites (allele number 0 or below the minimum) left out",
+            masked
+        );
+    }
     Ok(())
 }
 
