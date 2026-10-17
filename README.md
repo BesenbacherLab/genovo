@@ -24,6 +24,14 @@ cargo install genovo
 This will install the program genovo at a specific location which will be shown at the end of the installation process.
 (You might need to make adjustments to your `PATH` variable afterwards to automatically find the program on the command line)
 
+To build from this repository (with `mutexpect` and `pattern_partition_prediction` checked out next to it), use the dependency versions in `Cargo.lock`, which the tests were run with:
+
+```
+cargo build --release --locked
+```
+
+This needs Rust 1.75 or newer (`rustc --version`; update with `rustup update stable`). The binary is `target/release/genovo`.
+
 The pipeline is a single executable (`genovo`) that combines the important steps from an earlier pipeline that I had put together.
 (A single executable is much easier for others to use than a bunch of scripts that are all loosely coupled.)
 
@@ -332,9 +340,12 @@ Writes every possible mutation of every transcript to STDOUT, one tab-separated 
 |5|transcript ID|
 |6|mutation type (e.g. `Missense`, `SpliceSite`, `FrameshiftIndel`)|
 |7|sequence context centred on the mutated base (for indels: on the base after the insertion/deletion point)|
+|8|only with `--point-mutation-probabilities`: the probability of the mutation, as used by `enumerate`|
 
 The same mutations are considered as in `enumerate`, with the same filters (`--include-intronic`, `--include-unknown`, `--filter-plof`, `--id`).
 The sequence context has the k-mer size of the `--point-mutation-probabilities` model if one is given, and is 9 bases otherwise.
+
+With `--point-mutation-probabilities` (and `--indel-mutation-probabilities` for indels), column 8 holds the probability of each mutation after `--scaling-factor` or `--calibration` and `--allele-numbers`, and the mutations that `enumerate` leaves out are not written (masked sites, undefined rates, indels without an indel model). Summed per transcript and mutation type, the probabilities are the expected numbers of `expect`, so the expected number of mutations in any subset of sites (e.g. by position in the coding sequence) is the sum over those sites.
 
 ```
 genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit > possible_mutations.tsv
@@ -346,7 +357,9 @@ genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit 
 |---|---|---|
 |--genomic-regions or --gff3|input|The transcripts|
 |--genome         |input |The reference genome in 2bit format|
-|--point-mutation-probabilities|input (optional)|Only used for the size of the sequence context|
+|--point-mutation-probabilities|input (optional)|The size of the sequence context, and the probabilities of column 8|
+|--indel-mutation-probabilities|input (optional)|The probabilities of indels in column 8|
+|--scaling-factor, --calibration, --allele-numbers, --min-an|input (optional)|Scaling and masking of the probabilities, as in `enumerate`|
 
 
 ## Tests

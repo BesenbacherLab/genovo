@@ -4,6 +4,8 @@ version = "0.3.3"
 authors = ["Jörn Bethune <joern@localhost>", "Søren Besenbacher <besenbacher@clin.au.dk>"]
 repository = "https://github.com/BesenbacherLab/genovo"
 edition = "2018"
+# Oldest Rust that builds genovo with the versions in Cargo.lock (zlib-rs, via flate2)
+rust-version = "1.75"
 readme = "README.md"
 license = "MIT"
 keywords = [ "mutation", "genetics", "statistical-model" ]
