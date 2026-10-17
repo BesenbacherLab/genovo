@@ -336,3 +336,43 @@ fn pipeline_chr22() {
         assert_eq!(rows(&single.2), rows(&one_go.2), "{} sampled", id);
     }
 }
+
+/// A transcript whose sequence contexts reach into an N gap (chr22 starts
+/// with Ns up to 0-based position 16050000 in the test genome) is skipped
+/// with a warning by enumerate and by possible_mutations with probabilities,
+/// and the other transcripts are unaffected.
+#[test]
+fn transcripts_next_to_n_are_skipped() {
+    let dir = out_dir("genovo_n_gap");
+    let regions = dir.join("regions.txt");
+    let real = dir.join("real.txt");
+    genovo(&["--action", "transform", "--gff3", GFF3, "--id", IDS[0], "--genomic-regions", path(&real)]);
+    let real_line = fs::read_to_string(&real).unwrap();
+    fs::write(
+        &regions,
+        format!("NEAR_GAP\tchr22\t+\t16050000-16050200\t16050000-16050200\t16050003-16050198\t0\n{}", real_line),
+    )
+    .unwrap();
+    let expected = dir.join("expected.tsv");
+    let possible = dir.join("possible.txt");
+    let mut args = vec!["--action", "enumerate", "--genomic-regions", path(&regions), "--genome", GENOME,
+                        "--possible-mutations", path(&possible)];
+    args.extend(model_args());
+    genovo(&args);
+    genovo(&["--action", "expect", "--possible-mutations", path(&possible), "--expected-mutations", path(&expected)]);
+    let expected = fs::read_to_string(&expected).unwrap();
+    assert!(!expected.contains("NEAR_GAP"));
+    assert!(expected.contains(IDS[0]));
+
+    let mut args = vec!["--action", "possible_mutations", "--genomic-regions", path(&regions), "--genome", GENOME];
+    args.extend(model_args());
+    let sites = genovo(&args);
+    assert!(!sites.contains("NEAR_GAP"));
+    let total: f64 = sites.lines().map(|l| l.split('\t').nth(7).unwrap().parse::<f64>().unwrap()).sum();
+    let mut lines = expected.lines();
+    lines.next();
+    let expected_total: f64 = lines
+        .flat_map(|l| l.split('\t').skip(1).map(|v| v.parse::<f64>().unwrap()).collect::<Vec<_>>())
+        .sum();
+    assert!((total - expected_total).abs() < 1e-5 * expected_total, "{} vs {}", total, expected_total);
+}

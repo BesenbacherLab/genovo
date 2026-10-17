@@ -186,9 +186,10 @@ fn main() -> Result<()> {
                      mutation (chr, position, ref, alt, transcript, mutation type, sequence context) to\n\
                      STDOUT. It needs --genome and --gff3 or --genomic-regions; the context has the\n\
                      k-mer size of --point-mutation-probabilities if given (otherwise 9). With\n\
-                     --point-mutation-probabilities, an eighth column has the probability of each\n\
-                     mutation as in enumerate (with --scaling-factor or --calibration and\n\
-                     --allele-numbers), and mutations that enumerate leaves out are not written.\n\
+                     --point-mutation-probabilities, three more columns follow: the probability of\n\
+                     each mutation as in enumerate (with --scaling-factor or --calibration and\n\
+                     --allele-numbers), the allele number of its site (NA without --allele-numbers)\n\
+                     and the rate of the model; mutations that enumerate leaves out are not written.\n\
                      \n\
                      Progress messages are written to STDERR." )
         .arg(Arg::with_name("action")

@@ -341,11 +341,13 @@ Writes every possible mutation of every transcript to STDOUT, one tab-separated 
 |6|mutation type (e.g. `Missense`, `SpliceSite`, `FrameshiftIndel`)|
 |7|sequence context centred on the mutated base (for indels: on the base after the insertion/deletion point)|
 |8|only with `--point-mutation-probabilities`: the probability of the mutation, as used by `enumerate`|
+|9|only with `--point-mutation-probabilities`: the allele number of the site (`NA` without `--allele-numbers`)|
+|10|only with `--point-mutation-probabilities`: the per-generation rate of the model, before scaling|
 
 The same mutations are considered as in `enumerate`, with the same filters (`--include-intronic`, `--include-unknown`, `--filter-plof`, `--id`).
 The sequence context has the k-mer size of the `--point-mutation-probabilities` model if one is given, and is 9 bases otherwise.
 
-With `--point-mutation-probabilities` (and `--indel-mutation-probabilities` for indels), column 8 holds the probability of each mutation after `--scaling-factor` or `--calibration` and `--allele-numbers`, and the mutations that `enumerate` leaves out are not written (masked sites, undefined rates, indels without an indel model). Summed per transcript and mutation type, the probabilities are the expected numbers of `expect`, so the expected number of mutations in any subset of sites (e.g. by position in the coding sequence) is the sum over those sites.
+With `--point-mutation-probabilities` (and `--indel-mutation-probabilities` for indels), columns 8–10 are written; column 8 holds the probability of each mutation after `--scaling-factor` or `--calibration` and `--allele-numbers`, and the mutations that `enumerate` leaves out are not written (masked sites, undefined rates, indels without an indel model). Summed per transcript and mutation type, the probabilities are the expected numbers of `expect`, so the expected number of mutations in any subset of sites (e.g. by position in the coding sequence) is the sum over those sites.
 
 ```
 genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit > possible_mutations.tsv
@@ -357,8 +359,8 @@ genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit 
 |---|---|---|
 |--genomic-regions or --gff3|input|The transcripts|
 |--genome         |input |The reference genome in 2bit format|
-|--point-mutation-probabilities|input (optional)|The size of the sequence context, and the probabilities of column 8|
-|--indel-mutation-probabilities|input (optional)|The probabilities of indels in column 8|
+|--point-mutation-probabilities|input (optional)|The size of the sequence context, and columns 8–10|
+|--indel-mutation-probabilities|input (optional)|Columns 8–10 for indels|
 |--scaling-factor, --calibration, --allele-numbers, --min-an|input (optional)|Scaling and masking of the probabilities, as in `enumerate`|
 
 

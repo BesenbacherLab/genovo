@@ -404,7 +404,7 @@ fn summed_site_probabilities(sites: &str) -> BTreeMap<String, f64> {
     let mut sums = BTreeMap::new();
     for line in sites.lines() {
         let f: Vec<&str> = line.split('\t').collect();
-        assert_eq!(f.len(), 8, "{}", line);
+        assert_eq!(f.len(), 10, "{}", line);
         assert_eq!(f[4], ID);
         let name = match f[5] {
             "Unknown" => "unknown",
@@ -450,7 +450,19 @@ fn possible_mutation_probabilities_sum_to_the_expected_counts() {
         let mut args = vec!["--action", "possible_mutations", "--gff3", GFF3, "--genome", GENOME, "--id", ID];
         args.extend(model());
         args.extend(&extra);
-        let sums = summed_site_probabilities(&stdout(&args));
+        let sites = stdout(&args);
+        let sums = summed_site_probabilities(&sites);
+        // columns 9 and 10: allele number and model rate, with
+        // p = 1 - (1 - r)^(S h(n)) for the calibration above
+        let h = |n: f64| if n <= 1000.0 { 0.2 } else if n >= 6000.0 { 1.0 } else { 0.2 + 0.8 * (n - 1000.0) / 5000.0 };
+        for line in sites.lines() {
+            let f: Vec<&str> = line.split('\t').collect();
+            let (p_site, n, r): (f64, f64, f64) = (f[7].parse().unwrap(), f[8].parse().unwrap(), f[9].parse().unwrap());
+            assert!(n >= 100.0, "masked site written: {}", line);
+            let s = if f[3].len() == 1 { 5000.0 } else { 3000.0 };
+            let p = -(s * h(n) * (-r).ln_1p()).exp_m1();
+            assert!((p - p_site).abs() <= 1e-5 * p, "{}: expected p = {}", line, p);
+        }
 
         let mut lines = o.expected.lines();
         let header: Vec<&str> = lines.next().unwrap().split('\t').collect();

@@ -110,10 +110,11 @@ pub struct SiteProbabilities<'a> {
 /// line: chromosome, 1-based position, reference base, alternative, transcript
 /// ID, mutation type and the sequence context of `2 * radius + 1` bases.
 ///
-/// With `probabilities`, an eighth column holds the probability of the
+/// With `probabilities`, three more columns follow: the probability of the
 /// mutation as in `enumerate` (after `--scaling-factor` or `--calibration`
-/// and the allele numbers), and the mutations that `enumerate` leaves out are
-/// not written: those at masked sites, with an undefined (NaN) rate, and
+/// and the allele numbers), the allele number of its site (`NA` without
+/// allele numbers) and the per-generation rate of the model before scaling;
+/// and the mutations that `enumerate` leaves out are not written: those at masked sites, with an undefined (NaN) rate, and
 /// indels without an indel model. Summing the probabilities per transcript and
 /// mutation type gives the expected numbers of `expect`.
 ///
@@ -151,7 +152,13 @@ pub fn write_possible_mutations<W: Write>(
                 continue;
             }
         };
-        for_each_possible_mutation(
+        // Lines of this annotation; written only if all its sequence contexts
+        // have rates. Like enumerate (and calibrate), an annotation with a
+        // context that cannot be looked up (e.g. an N in the reference) is
+        // skipped as a whole, so the probabilities still sum to `expect`.
+        let mut lines: Vec<u8> = Vec::new();
+        let mut annotation_masked = 0usize;
+        let result = for_each_possible_mutation(
             &seq,
             annotation,
             radius,
@@ -159,6 +166,7 @@ pub fn write_possible_mutations<W: Write>(
             include_unknown,
             filter_plof,
             |site| -> Result<()> {
+                let out = &mut lines;
                 let point_rates = match probabilities {
                     Some(p) => Some(p.point.rates(site.seq_window).with_context(|| {
                         format!("bad sequence {} in {}", site.seq_window, annotation.name)
@@ -195,9 +203,12 @@ pub fn write_possible_mutations<W: Write>(
                             }
                             let class = VariantClass::from(m.mutation_type);
                             match p.scaling.probability(rate as f64, class, &annotation.chr, site.genomic_position) {
-                                Some(probability) => Some(probability as f32),
+                                Some(probability) => {
+                                    let an = p.scaling.allele_number(&annotation.chr, site.genomic_position);
+                                    Some((probability as f32, an, rate))
+                                }
                                 None => {
-                                    masked += 1;
+                                    annotation_masked += 1;
                                     continue;
                                 }
                             }
@@ -235,13 +246,21 @@ pub fn write_possible_mutations<W: Write>(
                         site.seq_window
                     )?;
                     match probability {
-                        Some(p) => writeln!(out, "\t{:e}", p)?,
+                        Some((p, Some(an), rate)) => writeln!(out, "\t{:e}\t{}\t{:e}", p, an, rate)?,
+                        Some((p, None, rate)) => writeln!(out, "\t{:e}\tNA\t{:e}", p, rate)?,
                         None => writeln!(out)?,
                     }
                 }
                 Ok(())
             },
-        )?;
+        );
+        match result {
+            Ok(()) => {
+                out.write_all(&lines)?;
+                masked += annotation_masked;
+            }
+            Err(e) => eprintln!("[WARNING] Skipping annotation {}: {:#}", annotation.name, e),
+        }
     }
     out.flush()?;
     if masked > 0 {
