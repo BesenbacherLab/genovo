@@ -63,11 +63,21 @@ fn run_calibrate(
     let an_file = required("allele-numbers")?;
     let observed_file = required("observed-mutations")?;
     let out = required("calibration")?;
-    let n_bins: usize = matches
-        .value_of("calibration-bins")
-        .expect("default value")
-        .parse()
-        .map_err(|_| anyhow::anyhow!("--calibration-bins must be a positive integer"))?;
+    let binning = calibrate::Binning {
+        an_step: matches
+            .value_of("calibration-an-step")
+            .expect("default value")
+            .parse()
+            .ok()
+            .filter(|x: &f64| *x > 1.0 && x.is_finite())
+            .ok_or_else(|| anyhow::anyhow!("--calibration-an-step must be a number above 1, e.g. 1.05"))?,
+        min_observed: matches
+            .value_of("calibration-min-observed")
+            .expect("default value")
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--calibration-min-observed must be a non-negative integer"))?,
+        monotone: matches.occurrences_of("calibration-monotone") > 0,
+    };
     let n_min: u32 = match matches.value_of("min-an") {
         Some(v) => v
             .parse()
@@ -100,13 +110,25 @@ fn run_calibrate(
         &needed,
         &options,
     )?;
-    let (mut calibration, bins) = calibrate::fit(&mut units, n_bins, n_min)?;
+    let (mut calibration, bins) = calibrate::fit(&mut units, &binning, n_min)?;
+    eprintln!(
+        "[INFO] {} bins of allele numbers ({} to {}); h from {:.3} to {:.3}",
+        bins.len(),
+        bins.first().map_or(0, |b| b.n_low),
+        bins.last().map_or(0, |b| b.n_high),
+        calibration.knots().iter().map(|k| k.1).fold(f64::INFINITY, f64::min),
+        calibration.knots().iter().map(|k| k.1).fold(0.0, f64::max),
+    );
     calibration.notes.push(format!(
-        "source\tgenovo {} --action calibrate: {} possible synonymous point mutations, {} observed, {} bins of allele numbers",
+        "source\tgenovo {} --action calibrate: {} possible synonymous point mutations, {} observed, \
+         {} bins of allele numbers (step {}, at least {} observed and unobserved per bin{})",
         VERSION,
         units.len(),
         units.iter().filter(|u| u.y).count(),
-        bins.len()
+        bins.len(),
+        binning.an_step,
+        binning.min_observed,
+        if binning.monotone { ", monotone" } else { "" }
     ));
     calibration
         .notes
@@ -291,12 +313,21 @@ fn main() -> Result<()> {
              .value_name("FILE")
              .help("With --action calibrate: observed and expected counts with the fitted calibration, by allele number and by rate (default: <calibration>.diagnostics.tsv)")
              .takes_value(true))
-        .arg(Arg::with_name("calibration-bins")
-             .long("--calibration-bins")
-             .value_name("NUMBER")
-             .help("With --action calibrate: number of allele-number bins for h")
-             .default_value("25")
+        .arg(Arg::with_name("calibration-an-step")
+             .long("--calibration-an-step")
+             .value_name("RATIO")
+             .help("With --action calibrate: allele numbers are binned on a grid with this ratio between neighbouring grid points (1.05: steps of 5%)")
+             .default_value("1.05")
              .takes_value(true))
+        .arg(Arg::with_name("calibration-min-observed")
+             .long("--calibration-min-observed")
+             .value_name("NUMBER")
+             .help("With --action calibrate: neighbouring grid cells are joined (from the highest allele number down) until a bin has at least this many observed and this many unobserved possible synonymous mutations")
+             .default_value("1000")
+             .takes_value(true))
+        .arg(Arg::with_name("calibration-monotone")
+             .long("--calibration-monotone")
+             .help("With --action calibrate: merge bins until h does not decrease with the allele number (h at most 1)"))
         .arg(Arg::with_name("calibration-ids")
              .long("--calibration-ids")
              .value_name("FILE")

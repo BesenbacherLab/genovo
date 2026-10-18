@@ -306,14 +306,24 @@ population data set; indels are ignored):
 genovo --action calibrate --gff3 annotation.gff3.gz --genome genome.2bit \
     --point-mutation-probabilities SNV_mutation_rate_model.txt \
     --allele-numbers allele_numbers.tsv.gz --observed-mutations variants.txt \
-    --calibration calibration.tsv [--min-an N] [--calibration-bins 25] \
+    --calibration calibration.tsv [--min-an N] [--calibration-an-step 1.05] \
+    [--calibration-min-observed 1000] [--calibration-monotone] \
     [--calibration-ids canonical_transcripts.txt]
 ```
 
-The sites are split into bins of allele numbers; in each bin, the scaling is
-chosen so that the expected number of observed variants equals the observed
-number. Bins are merged where this would make `h` decrease, `S` is the scaling
-of the best-covered bin, and `h` of each bin is its scaling divided by `S`.
+The sites are split into bins of allele numbers: the allele numbers are cut
+in steps of 5% (`--calibration-an-step`), and neighbouring steps are joined,
+from the highest allele number down, until a bin has at least 1000 observed
+and 1000 unobserved possible synonymous mutations (`--calibration-min-observed`).
+Allele numbers that only few sites have (e.g. sites covered only by the genomes
+of a data set that combines exomes and genomes) thus get bins of their own. In
+each bin, the scaling is chosen so that the expected number of observed
+variants equals the observed number; `S` is the scaling of the best-covered
+bin, and `h` of each bin is its scaling divided by `S` (constant within the
+bin, linear between bins). `h` may decrease with the allele number and exceed 1, because
+the allele number also reflects the quality of the data at a site, not only
+the number of samples. With `--calibration-monotone`, bins are instead merged
+until `h` does not decrease (and `h` is at most 1).
 `S_indel` is not fitted (it is set to `S_snv`; edit the file if needed).
 Diagnostics (observed and expected counts with the fitted calibration, by
 allele-number bin and by mutation-rate decile, for all sites and separately

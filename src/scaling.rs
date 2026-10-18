@@ -60,7 +60,8 @@ pub struct Calibration {
     pub s_indel: f64,
     /// Sites with a smaller allele number are masked.
     pub n_min: u32,
-    /// `(n, h)`, `n` strictly increasing, `h` non-decreasing in `[0, 1]`.
+    /// `(n, h)`, `n` strictly increasing, `h` finite and non-negative (it may
+    /// decrease and exceed 1, see `calibrate`).
     /// `h` is interpolated linearly between knots and constant outside them.
     /// No knots: `h ≡ 1`.
     knots: Vec<(u32, f64)>,
@@ -107,18 +108,10 @@ impl Calibration {
                     w[0].0
                 );
             }
-            if w[1].1 < w[0].1 {
-                bail!(
-                    "h must not decrease: h({}) = {} after h({}) = {}",
-                    w[1].0,
-                    w[1].1,
-                    w[0].0,
-                    w[0].1
-                );
-            }
         }
-        if let Some(&(n, h)) = self.knots.iter().find(|k| !(0.0..=1.0).contains(&k.1)) {
-            bail!("h must be between 0 and 1, got h({}) = {}", n, h);
+        // h may decrease with n and exceed 1 (see calibrate)
+        if let Some(&(n, h)) = self.knots.iter().find(|k| !(k.1.is_finite() && k.1 >= 0.0)) {
+            bail!("h must be a non-negative number, got h({}) = {}", n, h);
         }
         Ok(())
     }
@@ -469,8 +462,13 @@ mod tests {
         assert!(Calibration::new(0.0, 1.0, 0, vec![]).is_err());
         assert!(Calibration::new(1.0, f64::NAN, 0, vec![]).is_err());
         assert!(Calibration::new(1.0, 1.0, 0, vec![(10, 0.5), (10, 0.6)]).is_err());
-        assert!(Calibration::new(1.0, 1.0, 0, vec![(10, 0.5), (20, 0.4)]).is_err());
-        assert!(Calibration::new(1.0, 1.0, 0, vec![(10, 1.5)]).is_err());
+        assert!(Calibration::new(1.0, 1.0, 0, vec![(10, -0.1)]).is_err());
+        assert!(Calibration::new(1.0, 1.0, 0, vec![(10, f64::NAN)]).is_err());
+        // h may decrease and exceed 1
+        let c = Calibration::new(1.0, 1.0, 0, vec![(10, 0.5), (20, 0.4), (30, 1.5)]).unwrap();
+        assert!((c.h(15) - 0.45).abs() < 1e-12);
+        assert!((c.h(25) - 0.95).abs() < 1e-12);
+        assert_eq!(c.h(100), 1.5);
     }
 
     #[test]

@@ -5,7 +5,8 @@ Status: proposal, 2026-10-11. Implemented so far (§8): steps 1–4
 `--allele-numbers`, `--calibration`, `--min-an` for `enumerate` and
 `classify`, and `--action calibrate` (`src/calibrate.rs`; tests in
 `tests/allele_numbers.rs`). Indels (step 6) are not calibrated yet:
-`S_indel = S_snv`.
+`S_indel = S_snv`. 2026-10-18: bins of `calibrate` on the allele-number scale,
+`h` no longer forced to be monotone (§5.2).
 
 ## 1. Goal
 
@@ -76,8 +77,8 @@ p_i = 1 − (1 − r_i)^(S · h(n_i))           computed as −expm1(S · h(n_i)
 - `S`: the scaling factor of a fully covered site; separate values `S_snv`
   for point mutations and `S_indel` for indels (§6.3).
 - `h(n)`: the relative effective sample size at a site with `n` called
-  chromosomes, monotone non-decreasing, `h(n_ref) = 1` at a reference AN
-  `n_ref` (default: the 99th percentile of `n` over the calibration sites).
+  chromosomes, `h = 1` for the best-covered sites. It is not forced to be
+  monotone (§5.2): `n` also reflects data quality.
   `h` is estimated from the data (§5), not assumed to be `n / n_ref`: the
   number of segregating sites grows sublinearly with sample size, and the
   mixture of capture kits gives plateaus such as the one at 150–180k in
@@ -201,21 +202,39 @@ as `enumerate` does.
 
 ### 5.2 Estimating `S` and `h`
 
-`h` is a monotone step or piecewise-linear function on bins of `n`:
+`h` is a piecewise-linear function on bins of `n`:
 
-1. Split the calibration units into `B` bins of `n` (default 25 quantile bins,
-   with the top bin holding `n ≥ n_ref`).
+1. Split the calibration units into bins of `n`: cut `n` on a geometric grid
+   (steps of 5%, `--calibration-an-step`) and join neighbouring grid cells,
+   from the highest `n` down, until a bin has at least 1000 observed and 1000
+   unobserved units (`--calibration-min-observed`); units below the lowest
+   full bin join it. No allele number is split between bins.
 2. For each bin `b`, find the scaling `s_b` that makes the expected count
    equal the observed count:
    `Σ_{i∈b} [1 − (1 − r_i)^{s_b}] = Σ_{i∈b} y_i`.
    The left side increases monotonically with `s_b`, so bisection finds it.
    With rare, independent units this is the maximum-likelihood estimate of a
    one-parameter-per-bin model.
-3. `S = s_top` (the best-covered bin) and `h_b = s_b / S`. Then enforce
-   monotonicity with pool-adjacent-violators, weighted by the expected count
-   per bin, and set `h = 0` below `n_min`.
-4. Between bin centres, `h(n)` is linear interpolation; above the top centre
-   it is constant 1.
+3. `S = s_top` (the best-covered bin) and `h_b = s_b / S`; `h = 0` below
+   `n_min` (masked).
+4. `h(n)` is constant within a bin (knots at the lowest and highest `n` of
+   the bin), so that every bin reproduces its observed count; between bins,
+   where there are no calibration units, it is linear; outside all bins it is
+   constant.
+
+`h` is not forced to be monotone. The first version used 25 bins with equal
+numbers of units and merged bins whose `h` decreased (pool adjacent
+violators). On gnomAD v4.1 (exomes + genomes, 22.6 million units) this left 3
+bins: almost all synonymous sites have an allele number close to the maximum,
+so all sites with a low allele number shared one bin (`h = 0.23` below
+700k). That bin mixed sites covered only by the genomes (`n ≈ 152k`, observed
+about half as often as fully covered sites) with poorly called sites
+(`n < 150k`, hardly ever observed), so genes covered only by the genomes were
+overcorrected (synonymous O/E ≈ 2 after correction) and poorly called genes
+undercorrected. The allele number reflects data quality as well as sample
+size, so `h` may decrease with `n` and exceed 1. Bins defined on the `n` scale
+give the rare allele numbers bins of their own. `--calibration-monotone`
+restores the merging (and caps `h` at 1).
 
 This is the site-level version of what the paper did with transcripts and
 LOWESS. Fitting `S` on the best-covered sites, and scaling everything else

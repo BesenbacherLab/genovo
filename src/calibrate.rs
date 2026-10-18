@@ -8,13 +8,23 @@
 //! exactly that variant is among the observed variants. The model is
 //! `P(y = 1) = 1 − (1 − r)^(S · h(n))`.
 //!
-//! Fit: the units are split into bins of `n` (equal numbers of units, no
-//! allele number split between bins). In each bin the exponent `s_b` that
-//! makes the expected number of observed units equal the observed number is
-//! found by bisection. Bins whose exponents decrease with `n` are merged
-//! (pool adjacent violators, re-fitting the merged bin), `S` is the exponent
-//! of the last (best covered) bin and `h_b = s_b / S`, at the median allele
-//! number of each bin.
+//! Fit: the units are split into bins of `n`. The allele numbers are cut on a
+//! geometric grid (steps of `an_step`, e.g. 5 %), and neighbouring grid cells
+//! are joined, from the highest allele number down, until a bin has at least
+//! `min_observed` observed and `min_observed` unobserved units; no allele
+//! number is split between bins. Rare allele numbers (e.g. sites covered only
+//! by part of the data) thus get bins of their own, however few units they
+//! have compared with the best covered sites. In each bin the exponent `s_b`
+//! that makes the expected number of observed units equal the observed number
+//! is found by bisection. `S` is the exponent of the last (best covered) bin
+//! and `h_b = s_b / S`. `h` is constant within each bin (knots at the lowest
+//! and highest allele number of the bin) and linear between bins.
+//!
+//! `h` may decrease with `n`: the allele number also reflects data quality
+//! (a poorly called region has a low allele number however many samples
+//! there are), not only the sample size. With `monotone`, bins whose
+//! exponents decrease with `n` are merged instead (pool adjacent violators,
+//! re-fitting the merged bin), and `h` is capped at 1.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
@@ -139,43 +149,93 @@ fn make_bin(units: &[Unit]) -> Bin {
     }
 }
 
+/// How `fit` bins the units by allele number.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Binning {
+    /// Ratio between successive allele numbers of the grid (> 1).
+    pub an_step: f64,
+    /// Minimum number of observed, and of unobserved, units per bin.
+    pub min_observed: usize,
+    /// Merge bins whose exponents decrease with `n` (h monotone, at most 1).
+    pub monotone: bool,
+}
+
+impl Default for Binning {
+    fn default() -> Self {
+        Binning {
+            an_step: 1.05,
+            min_observed: 1000,
+            monotone: false,
+        }
+    }
+}
+
+/// Bin boundaries (start, end) in `units` (sorted by `n`), see the module
+/// documentation.
+fn bin_blocks(units: &[Unit], binning: &Binning) -> Vec<(usize, usize)> {
+    let ln_step = binning.an_step.ln();
+    let cell = |n: u32| (f64::from(n.max(1)).ln() / ln_step).floor() as i64;
+    let mut blocks: Vec<(usize, usize)> = Vec::new(); // from the top down
+    let mut end = units.len();
+    let mut start = end;
+    let (mut observed, mut unobserved) = (0usize, 0usize); // in units[start..end]
+    while start > 0 {
+        // extend the current bin by the next lower grid cell
+        let c = cell(units[start - 1].n);
+        while start > 0 && cell(units[start - 1].n) == c {
+            start -= 1;
+            if units[start].y {
+                observed += 1;
+            } else {
+                unobserved += 1;
+            }
+        }
+        if observed >= binning.min_observed && unobserved >= binning.min_observed {
+            blocks.push((start, end));
+            end = start;
+            observed = 0;
+            unobserved = 0;
+        }
+    }
+    if end > 0 {
+        // the lowest units do not make a bin of their own
+        match blocks.last_mut() {
+            Some(last) => last.0 = 0,
+            None => blocks.push((0, end)),
+        }
+    }
+    blocks.reverse();
+    blocks
+}
+
 /// Fit `S` and `h` (see the module documentation). `units` is sorted by `n`.
 /// Returns the calibration (with `S_indel = S_snv`) and the final bins.
-pub fn fit(units: &mut Vec<Unit>, n_bins: usize, n_min: u32) -> Result<(Calibration, Vec<Bin>)> {
+pub fn fit(units: &mut Vec<Unit>, binning: &Binning, n_min: u32) -> Result<(Calibration, Vec<Bin>)> {
     if units.iter().filter(|u| u.y).count() == 0 {
         bail!("none of the calibration sites is observed; cannot calibrate");
     }
-    units.sort_by(|a, b| a.n.cmp(&b.n).then(a.r.partial_cmp(&b.r).expect("no NaN")));
-    let n_bins = n_bins.max(1);
-    // bin boundaries: equal numbers of units, moved so that no n is split
-    let mut cuts = vec![0];
-    for b in 1..n_bins {
-        let mut c = units.len() * b / n_bins;
-        while c < units.len() && c > 0 && units[c].n == units[c - 1].n {
-            c += 1;
-        }
-        if c > *cuts.last().unwrap() && c < units.len() {
-            cuts.push(c);
-        }
+    if !(binning.an_step > 1.0 && binning.an_step.is_finite()) {
+        bail!("the allele-number step must be a number above 1, got {}", binning.an_step);
     }
-    cuts.push(units.len());
-    // blocks of consecutive bins: (start, end) in units
-    let mut blocks: Vec<(usize, usize)> = cuts.windows(2).map(|w| (w[0], w[1])).collect();
+    units.sort_by(|a, b| a.n.cmp(&b.n).then(a.r.partial_cmp(&b.r).expect("no NaN")));
+    let mut blocks = bin_blocks(units, binning);
     let mut bins: Vec<Bin> = blocks
         .iter()
         .map(|&(s, e)| make_bin(&units[s..e]))
         .collect();
-    // pool adjacent violators: exponents must not decrease with n
-    let mut i = 0;
-    while i + 1 < bins.len() {
-        if bins[i].exponent > bins[i + 1].exponent {
-            blocks[i].1 = blocks[i + 1].1;
-            blocks.remove(i + 1);
-            bins.remove(i + 1);
-            bins[i] = make_bin(&units[blocks[i].0..blocks[i].1]);
-            i = i.saturating_sub(1);
-        } else {
-            i += 1;
+    if binning.monotone {
+        // pool adjacent violators: exponents must not decrease with n
+        let mut i = 0;
+        while i + 1 < bins.len() {
+            if bins[i].exponent > bins[i + 1].exponent {
+                blocks[i].1 = blocks[i + 1].1;
+                blocks.remove(i + 1);
+                bins.remove(i + 1);
+                bins[i] = make_bin(&units[blocks[i].0..blocks[i].1]);
+                i = i.saturating_sub(1);
+            } else {
+                i += 1;
+            }
         }
     }
     let s = bins.last().unwrap().exponent;
@@ -186,13 +246,24 @@ pub fn fit(units: &mut Vec<Unit>, n_bins: usize, n_min: u32) -> Result<(Calibrat
             s
         );
     }
+    if let Some(b) = bins.iter().find(|b| !b.exponent.is_finite()) {
+        bail!(
+            "every calibration site with allele number {}-{} is observed; \
+             use a larger --calibration-min-observed",
+            b.n_low,
+            b.n_high
+        );
+    }
+    // h is constant within a bin (knots at its lowest and highest allele
+    // number), so that every bin reproduces its observed count; between bins,
+    // where there are no calibration sites, it is linear
     let mut knots: Vec<(u32, f64)> = Vec::new();
     for b in &bins {
-        let h = (b.exponent / s).min(1.0);
-        match knots.last_mut() {
-            // two bins with the same median: keep the larger h (monotone)
-            Some(last) if last.0 >= b.n_median => last.1 = last.1.max(h),
-            _ => knots.push((b.n_median, h)),
+        let h = b.exponent / s;
+        let h = if binning.monotone { h.min(1.0) } else { h };
+        knots.push((b.n_low, h));
+        if b.n_high > b.n_low {
+            knots.push((b.n_high, h));
         }
     }
     let calibration = Calibration::new(s, s, n_min, knots)?;
@@ -511,7 +582,8 @@ mod tests {
     fn recovers_s_and_h_from_simulated_data() {
         let s = 2.0e7;
         let mut units = simulate(s, 400_000, 1);
-        let (c, bins) = fit(&mut units, 20, 0).unwrap();
+        let (c, bins) = fit(&mut units, &Binning::default(), 0).unwrap();
+        assert!(bins.len() >= 10, "{} bins", bins.len());
         println!("S = {:e} (true {:e})", c.s_snv, s);
         for &(n, h) in c.knots() {
             println!("h({}) = {:.3} (true {:.3})", n, h, true_h(n));
@@ -523,18 +595,24 @@ mod tests {
             let want = true_h(n);
             assert!((h - want).abs() < 0.08, "h({}) = {}, true {}", n, h, want);
         }
-        // the fit reproduces the observed counts per bin
+        // the fit reproduces the observed counts per bin, also with h(n) of the
+        // calibration (constant within a bin)
         let mut start = 0;
         for b in &bins {
             let e = expected(&units[start..start + b.units], b.exponent);
             assert!((e - b.observed as f64).abs() < 1e-6 * b.observed as f64 + 1e-9);
+            let e: f64 = units[start..start + b.units]
+                .iter()
+                .map(|u| scale_probability(u.r, c.s_snv * c.h(u.n)))
+                .sum();
+            assert!((e - b.observed as f64).abs() < 1e-6 * b.observed as f64, "{:?}", b);
             start += b.units;
         }
-        // monotone
-        assert!(c
-            .knots()
-            .windows(2)
-            .all(|w| w[0].1 <= w[1].1 && w[0].0 < w[1].0));
+        assert!(c.knots().windows(2).all(|w| w[0].0 < w[1].0));
+        // every bin has enough observed and unobserved units
+        for b in &bins {
+            assert!(b.observed >= 1000 && b.units - b.observed >= 1000, "{:?}", b);
+        }
     }
 
     #[test]
@@ -554,42 +632,75 @@ mod tests {
         assert_eq!(fit_exponent(&all), f64::INFINITY);
     }
 
-    #[test]
-    fn decreasing_bins_are_merged() {
-        // two allele numbers, the lower one observed more often: one block
-        let mut units = Vec::new();
-        for i in 0..2000 {
-            units.push(Unit {
-                n: if i < 1000 { 1000 } else { 2000 },
+    /// Units at allele number `n` with rate 1e-8, every `every`-th observed.
+    fn units_at(n: u32, count: usize, every: usize) -> Vec<Unit> {
+        (0..count)
+            .map(|i| Unit {
+                n,
                 r: 1e-8,
-                y: if i < 1000 { i % 5 == 0 } else { i % 10 == 0 },
+                y: i % every == 0,
                 class: SubstitutionClass::Transversion,
-            });
+            })
+            .collect()
+    }
+
+    fn binning(min_observed: usize, monotone: bool) -> Binning {
+        Binning {
+            an_step: 1.05,
+            min_observed,
+            monotone,
         }
-        let (c, bins) = fit(&mut units, 2, 0).unwrap();
+    }
+
+    #[test]
+    fn h_may_decrease_and_exceed_one() {
+        // the lower allele number is observed more often (e.g. better data)
+        let mut units = units_at(1000, 1000, 5);
+        units.extend(units_at(2000, 1000, 10));
+        let (c, bins) = fit(&mut units, &binning(50, false), 0).unwrap();
+        assert_eq!(bins.len(), 2);
+        assert_eq!(c.knots()[1], (2000, 1.0));
+        assert!(c.knots()[0].1 > 2.0, "{:?}", c.knots());
+        // each bin reproduces its own observed count
+        assert!((expected(&units[..1000], c.s_snv * c.knots()[0].1) - 200.0).abs() < 1e-6);
+        assert!((expected(&units[1000..], c.s_snv) - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn monotone_merges_decreasing_bins() {
+        let mut units = units_at(1000, 1000, 5);
+        units.extend(units_at(2000, 1000, 10));
+        let (c, bins) = fit(&mut units, &binning(50, true), 0).unwrap();
         assert_eq!(bins.len(), 1);
-        assert_eq!(c.knots().len(), 1);
-        assert_eq!(c.knots()[0].1, 1.0);
+        assert_eq!(c.knots(), &[(1000, 1.0), (2000, 1.0)][..]);
         assert!((expected(&units, c.s_snv) - 300.0).abs() < 1e-6);
     }
 
     #[test]
-    fn bins_do_not_split_an_allele_number() {
-        let mut units: Vec<Unit> = (0..100)
-            .map(|i| Unit {
-                n: if i < 70 { 500 } else { 900 },
-                r: 1e-7,
-                // better covered sites observed more often: no merging
-                y: if i < 70 { i % 3 == 0 } else { i % 2 == 0 },
-                class: SubstitutionClass::Transversion,
-            })
-            .collect();
-        // 4 bins of 25 units would split the 70 units with n = 500
-        let (_, bins) = fit(&mut units, 4, 0).unwrap();
-        assert_eq!(bins.len(), 2, "{:?}", bins);
-        for b in &bins {
-            assert!(b.n_low == b.n_high, "{:?}", b);
-        }
+    fn rare_allele_numbers_get_their_own_bin() {
+        // most sites fully covered, a few covered by the genomes only
+        let mut units = units_at(1_600_000, 100_000, 2);
+        units.extend(units_at(152_000, 2_000, 4));
+        units.extend(units_at(390_000, 2_000, 3));
+        let (c, bins) = fit(&mut units, &binning(200, false), 0).unwrap();
+        assert_eq!(bins.len(), 3, "{:?}", bins);
+        let knots: Vec<u32> = c.knots().iter().map(|k| k.0).collect();
+        assert_eq!(knots, vec![152_000, 390_000, 1_600_000]);
+        assert!(c.knots()[0].1 < c.knots()[1].1 && c.knots()[1].1 < 1.0);
+    }
+
+    #[test]
+    fn bins_join_grid_cells_from_the_top_and_never_split_an_allele_number() {
+        let mut units = units_at(1000, 300, 2); // 150 observed
+        units.extend(units_at(1020, 300, 2)); // same 5% cell as 1000
+        units.extend(units_at(1500, 300, 2));
+        units.extend(units_at(1600, 300, 2));
+        units.extend(units_at(10, 50, 2)); // too few for a bin of their own
+        let (_, bins) = fit(&mut units, &binning(200, false), 0).unwrap();
+        let ranges: Vec<(u32, u32)> = bins.iter().map(|b| (b.n_low, b.n_high)).collect();
+        // 1600 alone has 150 observed: joined with 1500; 1000 and 1020 share a
+        // cell; the 50 units at n = 10 join the lowest bin
+        assert_eq!(ranges, vec![(10, 1020), (1500, 1600)], "{:?}", bins);
     }
 
     #[test]
@@ -610,6 +721,6 @@ mod tests {
             y: false,
             class: SubstitutionClass::Transversion,
         }];
-        assert!(fit(&mut units, 5, 0).is_err());
+        assert!(fit(&mut units, &Binning::default(), 0).is_err());
     }
 }
