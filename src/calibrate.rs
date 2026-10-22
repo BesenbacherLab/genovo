@@ -353,6 +353,9 @@ pub fn collect_units(
     let radius = rates.radius();
     let mut seen: HashSet<(u16, u32, u8)> = HashSet::new();
     let mut units = Vec::new();
+    // per chromosome: (units, observed units), to catch observed variants
+    // that do not cover all chromosomes of the annotations
+    let mut per_chromosome: HashMap<String, (usize, usize)> = HashMap::new();
     let mut masked = 0usize;
     for annotation in annotations {
         if let Some(id) = options.filter_for_id {
@@ -411,10 +414,14 @@ pub fn collect_units(
                     if r.is_nan() {
                         continue;
                     }
+                    let y = observed.keys.contains(&key);
+                    let counts = per_chromosome.entry(annotation.chr.clone()).or_insert((0, 0));
+                    counts.0 += 1;
+                    counts.1 += y as usize;
                     units.push(Unit {
                         n,
                         r,
-                        y: observed.keys.contains(&key),
+                        y,
                         class: SubstitutionClass::of(w[radius - 1], w[radius], w[radius + 1], alt),
                     });
                 }
@@ -431,6 +438,19 @@ pub fn collect_units(
         units.iter().filter(|u| u.y).count(),
         masked
     );
+    let mut unobserved: Vec<(&String, &(usize, usize))> = per_chromosome
+        .iter()
+        .filter(|(_, &(n, y))| y == 0 && n >= 1000)
+        .collect();
+    unobserved.sort();
+    for (chr, (n, _)) in unobserved {
+        eprintln!(
+            "[WARNING] calibration: none of the {} possible synonymous mutations on {} is observed; \
+             do the observed mutations cover {}? Otherwise leave its transcripts out (e.g. with \
+             --calibration-ids or a --genomic-regions file without them)",
+            n, chr, chr
+        );
+    }
     Ok(units)
 }
 
