@@ -180,6 +180,7 @@ The numeric mutation type is defined in the section [Mutation type numeric code 
 |--allele-numbers              |input (optional)|Per-site allele numbers, see [Uneven coverage](#uneven-coverage-per-site-allele-numbers)|
 |--calibration                 |input (optional)|Instead of `--scaling-factor`: scaling that depends on the allele number|
 |--min-an                      |number (optional)|Leave out sites with a smaller allele number|
+|--loftee-filter, --gerp       |input (optional)|Count only LOFTEE's high-confidence LoF mutations, see [LoF confidence](#lof-confidence-loftees-filters)|
 
 
 #### classify
@@ -208,6 +209,7 @@ The fourth column is the new base that was mutated into.
 |--genomic-regions     |input |A transformed version of the GFF3 entries, limited to transcripts, exons and CDS regions|
 |--classified-mutations|output|The observed mutatations. But annotated with numeric mutation types|
 |--allele-numbers, --min-an|input (optional)|Leave out observed mutations at the sites that `enumerate` leaves out (give the same values to both steps)|
+|--loftee or --loftee-filter, --gerp|input (optional)|LOFTEE's labels (columns `loftee`, `loftee_info`), see [LoF confidence](#lof-confidence-loftees-filters)|
 
 #### expect
 
@@ -336,6 +338,44 @@ transcripts. A genome-wide file takes several minutes to read, so for many runs
 (e.g. one per transcript with `--id`) restrict it beforehand to the BED file
 written by `--action transform --regions-bed FILE`.
 
+#### LoF confidence: LOFTEE's filters
+
+gnomAD counts only the putative loss-of-function (LoF) variants that
+[LOFTEE](https://github.com/konradjk/loftee) rates high confidence (HC).
+genovo applies the LOFTEE filters that gnomAD v4.1 uses (without LOFTEE's
+splice predictions) to nonsense, frameshift and splice-site mutations
+(`src/loftee.rs`):
+
+* `END_TRUNC` (nonsense, frameshift): at most 50 bases upstream of the last
+  exon junction as LOFTEE measures it, and the GERP++ scores from the mutation
+  to the stop codon sum to at most `--loftee-gerp-cutoff` (0 as in gnomAD
+  v4.1.1; LOFTEE's default is -58). Needs `--gerp`. As in LOFTEE's code, the
+  exons downstream of the stop codon (3' UTR exons) count towards that
+  distance, so `END_TRUNC` rarely applies in transcripts with a 3' UTR intron.
+* `SMALL_INTRON`, `5UTR_SPLICE`, `3UTR_SPLICE` (splice site): an intron
+  shorter than 15 bases, or upstream of the start codon or downstream of the
+  stop codon.
+
+Options:
+
+* `--loftee`: label the LoF mutations (`HC`, or `LC:` and the filters) in the
+  output of `possible_mutations` (two more columns) and `classify` (columns
+  `loftee` and `loftee_info`), with the numbers the filters use; the mutation
+  types are unchanged.
+* `--loftee-filter`: as `--loftee`, and count the low-confidence (LC) mutations
+  as `Unknown` in `enumerate`, `possible_mutations` and `classify`, i.e. LoF
+  counts are high confidence only. Conflicts with `--filter-plof`.
+* `--gerp FILE`: GERP++ rejected-substitution scores per site (layout as
+  `--allele-numbers`: `chrom pos score` or `chrom:pos score`, 1-based, sorted;
+  only the exon sites are read), e.g. from LOFTEE's
+  `gerp_conservation_scores.homo_sapiens.GRCh38.bw` at the sites of
+  `--action transform --regions-bed`. LOFTEE takes the mean scores of the
+  intervals from the bigWig summary levels, which approximate them, so sums
+  close to the cutoff may come out differently.
+
+Not applied: `GC_TO_GT_DONOR` (genovo's splice sites have a GT donor),
+`ANC_ALLELE` (needs the human ancestral sequence) and LOFTEE's flags.
+
 #### possible_mutations
 
 Not part of the pipeline (it only runs when given with `--action possible_mutations`).
@@ -353,6 +393,7 @@ Writes every possible mutation of every transcript to STDOUT, one tab-separated 
 |8|only with `--point-mutation-probabilities`: the probability of the mutation, as used by `enumerate`|
 |9|only with `--point-mutation-probabilities`: the allele number of the site (`NA` without `--allele-numbers`)|
 |10|only with `--point-mutation-probabilities`: the per-generation rate of the model, before scaling|
+|last two|only with `--loftee` or `--loftee-filter`: LOFTEE's label of LoF mutations (`HC`, or `LC:` and the filters; `.` for other mutations) and the numbers the filters are based on (`GERP_DIST`, `BP_DIST`, `DIST_FROM_LAST_EXON`, `50_BP_RULE`, `INTRON_SIZE`, as in LOFTEE's `LoF_info`), see [LoF confidence](#lof-confidence-loftees-filters)|
 
 The same mutations are considered as in `enumerate`, with the same filters (`--include-intronic`, `--include-unknown`, `--filter-plof`, `--id`).
 The sequence context has the k-mer size of the `--point-mutation-probabilities` model if one is given, and is 9 bases otherwise.
@@ -372,6 +413,7 @@ genovo --action possible_mutations --gff3 annotation.gff3.gz --genome hg19.2bit 
 |--point-mutation-probabilities|input (optional)|The size of the sequence context, and columns 8–10|
 |--indel-mutation-probabilities|input (optional)|Columns 8–10 for indels|
 |--scaling-factor, --calibration, --allele-numbers, --min-an|input (optional)|Scaling and masking of the probabilities, as in `enumerate`|
+|--loftee or --loftee-filter, --gerp, --loftee-gerp-cutoff|input (optional)|LOFTEE's labels, see [LoF confidence](#lof-confidence-loftees-filters)|
 
 
 ## Tests

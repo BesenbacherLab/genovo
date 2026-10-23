@@ -9,10 +9,14 @@
 //!
 //! The file may cover the whole genome, so it is streamed once and only the
 //! positions genovo needs (see [`NeededSites`]) are kept.
+//!
+//! Other per-site values in the same layout (e.g. the GERP++ scores of
+//! `--gerp`) are read with [`SiteValues`].
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{BufRead, BufReader, Write};
+use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
 
@@ -118,38 +122,99 @@ fn find(list: &[Interval], pos: usize) -> Option<usize> {
 /// Allele numbers at the needed sites.
 #[derive(Debug, Default)]
 pub struct AlleleNumbers {
-    /// Per chromosome: (0-based position, allele number), sorted by position.
-    sites: HashMap<String, Vec<(u32, u32)>>,
+    values: SiteValues<u32>,
 }
 
 impl AlleleNumbers {
     /// The allele number at a 0-based position; 0 if the site is not in the
     /// file (not callable) or was not needed.
     pub fn get(&self, chr: &str, pos: usize) -> u32 {
-        let list = match self.sites.get(chr) {
-            Some(list) => list,
-            None => return 0,
-        };
-        match list.binary_search_by_key(&(pos as u64), |&(p, _)| u64::from(p)) {
-            Ok(i) => list[i].1,
-            Err(_) => 0,
-        }
+        self.values.get(chr, pos).unwrap_or(0)
     }
 
     /// Number of stored sites (with allele number > 0).
     pub fn len(&self) -> usize {
-        self.sites.values().map(Vec::len).sum()
+        self.values.len()
     }
 
     pub fn read_from_file(path: &str, needed: &NeededSites) -> Result<Self> {
-        let reader = get_reader(path)
-            .with_context(|| format!("failed to open file {} for reading", path))?;
-        Self::read(BufReader::with_capacity(1 << 20, reader), needed)
-            .with_context(|| format!("reading allele numbers from {}", path))
+        Ok(AlleleNumbers {
+            values: SiteValues::read_from_file(path, needed, "an", |an| *an > 0)
+                .with_context(|| format!("reading allele numbers from {}", path))?,
+        })
     }
 
-    pub fn read<R: BufRead>(mut reader: R, needed: &NeededSites) -> Result<Self> {
-        let mut sites: HashMap<String, Vec<(u32, u32)>> = HashMap::new();
+    #[cfg(test)]
+    pub fn read<R: BufRead>(reader: R, needed: &NeededSites) -> Result<Self> {
+        Ok(AlleleNumbers {
+            values: SiteValues::read(reader, needed, "an", |an| *an > 0)?,
+        })
+    }
+}
+
+/// Values of one kind (allele numbers, conservation scores, ...) at the
+/// needed sites, from a file in the layout described at the top of this
+/// module (`chrom  pos  value` or `chrom:pos  value`, 1-based, sorted).
+#[derive(Debug)]
+pub struct SiteValues<T> {
+    /// Per chromosome: (0-based position, value), sorted by position.
+    sites: HashMap<String, Vec<(u32, T)>>,
+}
+
+impl<T> Default for SiteValues<T> {
+    fn default() -> Self {
+        SiteValues {
+            sites: HashMap::new(),
+        }
+    }
+}
+
+impl<T: Copy + FromStr> SiteValues<T> {
+    /// The value at a 0-based position; `None` if the site is not in the file
+    /// (or its value was not kept) or was not needed.
+    pub fn get(&self, chr: &str, pos: usize) -> Option<T> {
+        let list = self.sites.get(chr)?;
+        list.binary_search_by_key(&(pos as u64), |&(p, _)| u64::from(p))
+            .ok()
+            .map(|i| list[i].1)
+    }
+
+    /// The stored sites in the 0-based half-open range `start..stop`, sorted.
+    pub fn range(&self, chr: &str, start: usize, stop: usize) -> &[(u32, T)] {
+        let list = match self.sites.get(chr) {
+            Some(list) => list,
+            None => return &[],
+        };
+        let a = list.partition_point(|&(p, _)| (p as usize) < start);
+        let b = list.partition_point(|&(p, _)| (p as usize) < stop);
+        &list[a..b.max(a)]
+    }
+
+    /// Number of stored sites.
+    pub fn len(&self) -> usize {
+        self.sites.values().map(Vec::len).sum()
+    }
+
+    /// Read the needed sites of `path`, keeping the values for which `keep`
+    /// is true. `name` names the value column in error messages.
+    pub fn read_from_file(
+        path: &str,
+        needed: &NeededSites,
+        name: &str,
+        keep: impl Fn(&T) -> bool,
+    ) -> Result<Self> {
+        let reader = get_reader(path)
+            .with_context(|| format!("failed to open file {} for reading", path))?;
+        Self::read(BufReader::with_capacity(1 << 20, reader), needed, name, keep)
+    }
+
+    pub fn read<R: BufRead>(
+        mut reader: R,
+        needed: &NeededSites,
+        name: &str,
+        keep: impl Fn(&T) -> bool,
+    ) -> Result<Self> {
+        let mut sites: HashMap<String, Vec<(u32, T)>> = HashMap::new();
         let mut finished: Vec<String> = Vec::new(); // chromosomes already seen
         let mut current_chr = String::new();
         let mut current: Option<&Vec<Interval>> = None; // needed intervals of current_chr
@@ -168,7 +233,7 @@ impl AlleleNumbers {
             if text.is_empty() || text.starts_with('#') {
                 continue;
             }
-            let (chr, pos, an) = match parse_line(text) {
+            let (chr, pos, value) = match parse_line::<T>(text) {
                 Some(fields) => fields,
                 // a header has the same number of columns, but no numbers
                 None if first_data_line && matches!(text.split('\t').count(), 2 | 3) => {
@@ -176,8 +241,10 @@ impl AlleleNumbers {
                     continue;
                 }
                 None => bail!(
-                    "line {}: expected 'chrom<TAB>pos<TAB>an' or 'chrom:pos<TAB>an', found '{}'",
+                    "line {}: expected 'chrom<TAB>pos<TAB>{}' or 'chrom:pos<TAB>{}', found '{}'",
                     line_no,
+                    name,
+                    name,
                     text
                 ),
             };
@@ -224,24 +291,24 @@ impl AlleleNumbers {
             while next_interval < intervals.len() && intervals[next_interval].stop <= pos {
                 next_interval += 1;
             }
-            if next_interval < intervals.len() && intervals[next_interval].start <= pos && an > 0 {
+            if next_interval < intervals.len() && intervals[next_interval].start <= pos && keep(&value) {
                 let pos32 = u32::try_from(pos).context("position does not fit in 32 bits")?;
                 sites
                     .entry(current_chr.clone())
                     .or_insert_with(Vec::new)
-                    .push((pos32, an));
+                    .push((pos32, value));
             }
         }
-        Ok(AlleleNumbers { sites })
+        Ok(SiteValues { sites })
     }
 }
 
-/// Parse `chrom<TAB>pos<TAB>an` or `chrom:pos<TAB>an`.
-fn parse_line(text: &str) -> Option<(&str, usize, u32)> {
+/// Parse `chrom<TAB>pos<TAB>value` or `chrom:pos<TAB>value`.
+fn parse_line<T: FromStr>(text: &str) -> Option<(&str, usize, T)> {
     let mut fields = text.split('\t');
     let first = fields.next()?;
     let second = fields.next()?;
-    let (chr, pos, an) = match fields.next() {
+    let (chr, pos, value) = match fields.next() {
         Some(third) => (first, second, third),
         None => {
             let (chr, pos) = first.rsplit_once(':')?;
@@ -251,7 +318,7 @@ fn parse_line(text: &str) -> Option<(&str, usize, u32)> {
     if chr.is_empty() || fields.next().is_some() {
         return None;
     }
-    Some((chr, pos.trim().parse().ok()?, an.trim().parse().ok()?))
+    Some((chr, pos.trim().parse().ok()?, value.trim().parse().ok()?))
 }
 
 #[cfg(test)]
@@ -379,6 +446,29 @@ mod tests {
         assert!(read("chr1\t99\t1\nchr1\tx\t1\n").is_err()); // bad line after data
         assert!(read("chr1\t0\t1\n").is_err()); // not 1-based
         assert!(read("chr1\t99\t1\t5\n").is_err()); // too many columns
+    }
+
+    #[test]
+    fn float_values_and_ranges() {
+        let text = "chrom\tpos\tgerp\nchr1\t99\t-1.5\nchr1\t100\tnan\nchr1\t101\t4.25\n\
+                    chr1\t150\t2\nchr1\t180\t3e-1\n";
+        let v: SiteValues<f32> =
+            SiteValues::read(text.as_bytes(), &needed(), "gerp", |x: &f32| x.is_finite()).unwrap();
+        assert_eq!(v.get("chr1", 98), Some(-1.5));
+        assert_eq!(v.get("chr1", 99), None); // NaN not kept
+        assert_eq!(v.get("chr1", 149), None); // not needed
+        assert_eq!(v.len(), 3);
+        let r: Vec<(u32, f32)> = v.range("chr1", 98, 181).to_vec();
+        assert_eq!(r, vec![(98, -1.5), (100, 4.25), (179, 0.3)]);
+        assert!(v.range("chr1", 101, 179).is_empty());
+        assert!(v.range("chr9", 0, 1000).is_empty());
+        let msg = format!(
+            "{:#}",
+            SiteValues::<f32>::read("chr1\t99\t1\nchr1\t100\tx\n".as_bytes(), &needed(), "gerp", |_| true)
+                .map(|_| ())
+                .unwrap_err()
+        );
+        assert!(msg.contains("chrom<TAB>pos<TAB>gerp"), "{}", msg);
     }
 
     #[test]

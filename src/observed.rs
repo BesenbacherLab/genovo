@@ -14,6 +14,7 @@ use crate::compare::tally_up_observed_mutations;
 use crate::counts::ObservedMutationCounts;
 use crate::error::ParseError;
 use crate::io::{get_reader, get_writer};
+use crate::loftee::Loftee;
 use crate::scaling::SiteScaling;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -23,6 +24,13 @@ pub struct Mutation {
     pub position: usize,
     pub mutation_type: MutationType,
     pub change: Change,
+    /// With `--loftee`: LOFTEE's label (`HC`, `LC:<filters>`, `.` if not a
+    /// putative LoF variant) and the numbers it is based on. The columns are
+    /// only written if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loftee: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loftee_info: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -44,7 +52,7 @@ impl Mutation {
             }
             Change::Indel( from, to )
         };
-        Self {region, chromosome, position, change, mutation_type: MutationType::Unknown, }
+        Self {region, chromosome, position, change, mutation_type: MutationType::Unknown, loftee: None, loftee_info: None }
     }
 
     pub fn ref_base(&self) -> char {
@@ -142,9 +150,11 @@ pub fn classify_mutations(
     filter_for_id: Option<&str>,
     filter_plof : bool,
     scaling: &SiteScaling,
+    loftee: Option<&Loftee>,
 ) -> Result<Vec<Mutation>> {
     let mut result = Vec::new();
     let mut masked = 0usize;
+    let mut low_confidence = 0usize;
 
     let flank = 2; // number of flanking bases left and right needed to classify all coding point mutations
 
@@ -166,6 +176,7 @@ pub fn classify_mutations(
         assert_eq!(seq_of_region.len(), 2 * flank + annotation.range.len());
 
         let classifier = PointMutationClassifier::new(&annotation, 2);
+        let assessor = loftee.map(|l| l.transcript(annotation));
         let mut relevant_mutations =
             filter_observed_mutations(&observed_mutations, &annotation.chr, annotation.range);
         for mutation in &mut relevant_mutations {
@@ -227,6 +238,21 @@ pub fn classify_mutations(
                     classified_mutation.mutation_type = mutation_type;
                 },
             }
+            if let (Some(l), Some(t)) = (loftee, &assessor) {
+                // the same position as for the allele number
+                let assessment = t.assess(site, classified_mutation.mutation_type);
+                let counted = l.counted_type(classified_mutation.mutation_type, assessment.as_ref());
+                if counted != classified_mutation.mutation_type {
+                    low_confidence += 1;
+                    classified_mutation.mutation_type = counted;
+                }
+                let (label, info) = match &assessment {
+                    Some(a) => (a.label(), a.info()),
+                    None => (".".to_string(), ".".to_string()),
+                };
+                classified_mutation.loftee = Some(label);
+                classified_mutation.loftee_info = Some(info);
+            }
             result.push(classified_mutation);
         }
     }
@@ -234,6 +260,12 @@ pub fn classify_mutations(
         eprintln!(
             "[INFO] {} observed mutations at masked sites (allele number 0 or below the minimum) left out",
             masked
+        );
+    }
+    if low_confidence > 0 {
+        eprintln!(
+            "[INFO] {} observed low-confidence LoF mutations (LOFTEE) counted as Unknown",
+            low_confidence
         );
     }
     Ok(result)
@@ -372,6 +404,8 @@ mod tests {
             chromosome: "chr42".to_string(),
             position: 42,
             change: Change::PointMutation('A', 'T'),
+            loftee: None,
+            loftee_info: None,
         });
         write_to_file(path, &om).unwrap();
         let om2 = read_from_file(path).unwrap();
@@ -383,6 +417,8 @@ mod tests {
             chromosome: "chrM".to_string(),
             position: 4,
             change: Change::PointMutation('C', 'G'),
+            loftee: None,
+            loftee_info: None,
         });
         write_to_file(path, &om).unwrap();
         let om2 = read_from_file(path).unwrap();
@@ -392,5 +428,28 @@ mod tests {
         write_to_file(path, &om).unwrap();
         let om2 = read_from_file(path).unwrap();
         assert_eq!(om, om2);
+        // no LOFTEE columns unless labelled
+        let text = std::fs::read_to_string(path).unwrap();
+        assert_eq!(text.lines().next().unwrap(), "region\tchromosome\tposition\tmutation_type\tchange");
+    }
+
+    #[test]
+    fn test_observed_mutations_io_with_loftee() {
+        let path = "/tmp/unit_test.observed_mutations_loftee";
+        let mut a = Mutation::new(Some("T1".to_string()), "chr1".to_string(), 9, "C".to_string(), "T".to_string());
+        a.mutation_type = MutationType::Nonsense;
+        a.loftee = Some("LC:END_TRUNC".to_string());
+        a.loftee_info = Some("GERP_DIST:-3.000,BP_DIST:12,DIST_FROM_LAST_EXON:-40,50_BP_RULE:FAIL".to_string());
+        let mut b = Mutation::new(Some("T1".to_string()), "chr1".to_string(), 20, "C".to_string(), "A".to_string());
+        b.mutation_type = MutationType::Missense;
+        b.loftee = Some(".".to_string());
+        b.loftee_info = Some(".".to_string());
+        let om = vec![a, b];
+        write_to_file(path, &om).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "region\tchromosome\tposition\tmutation_type\tchange\tloftee\tloftee_info");
+        assert_eq!(lines[1], "T1\tchr1\t9\t3\tC->T\tLC:END_TRUNC\tGERP_DIST:-3.000,BP_DIST:12,DIST_FROM_LAST_EXON:-40,50_BP_RULE:FAIL");
+        assert_eq!(read_from_file(path).unwrap(), om);
     }
 }

@@ -12,6 +12,7 @@ use twobit::TwoBitFile;
 
 use crate::error::ParseError;
 use crate::io::{get_reader, get_writer};
+use crate::loftee::Loftee;
 use crate::scaling::{SiteScaling, VariantClass};
 use crate::{Float, MutationType};
 
@@ -28,16 +29,21 @@ pub fn enumerate_possible_mutations(
     include_intronic : bool,
     include_unknown : bool,
     filter_plof : bool,
+    loftee: Option<&Loftee>,
 ) -> Result<PossibleMutations> {
     let mut result = HashMap::new();
     let mut masked = 0usize;
+    let mut low_confidence = 0usize;
     let radius = mutation_rates.radius();
+    // only filtering changes what enumerate counts
+    let loftee = loftee.filter(|l| l.filters_low_confidence());
     for annotation in annotations {
         if let Some(id) = filter_for_id {
             if annotation.name != id {
                 continue;
             }
         }
+        let assessor = loftee.map(|l| l.transcript(annotation));
         let seq = match annotation_sequence(ref_genome, annotation, radius) {
             Ok(seq) => seq,
             Err(e) => {
@@ -53,6 +59,17 @@ pub fn enumerate_possible_mutations(
                 let mut mutations = Vec::with_capacity(events.len());
                 for (position, mut event) in events {
                     let class = VariantClass::from(event.mutation_type);
+                    if let (Some(l), Some(t)) = (loftee, &assessor) {
+                        let assessment = t.assess(position, event.mutation_type);
+                        let counted = l.counted_type(event.mutation_type, assessment.as_ref());
+                        if counted != event.mutation_type {
+                            low_confidence += 1;
+                            if counted == MutationType::Unknown && !include_unknown {
+                                continue;
+                            }
+                            event.mutation_type = counted;
+                        }
+                    }
                     match scaling.probability(event.probability as f64, class, &annotation.chr, position) {
                         Some(p) => {
                             event.probability = p as f32;
@@ -78,7 +95,18 @@ pub fn enumerate_possible_mutations(
             masked
         );
     }
+    report_low_confidence(low_confidence, include_unknown);
     Ok(result)
+}
+
+fn report_low_confidence(n: usize, include_unknown: bool) {
+    if n > 0 {
+        eprintln!(
+            "[INFO] {} possible low-confidence LoF mutations (LOFTEE) {}",
+            n,
+            if include_unknown { "counted as Unknown" } else { "left out" }
+        );
+    }
 }
 
 /// The genomic sequence of an annotated region plus `radius` flanking bases on
@@ -124,6 +152,12 @@ pub struct SiteProbabilities<'a> {
 /// insertion/deletion point), and as alternative the anchor followed by `NNN`
 /// (in-frame) or `N` (frameshift). The context is centred on the base after
 /// the insertion/deletion point.
+///
+/// With `loftee`, two more columns follow: LOFTEE's label of putative LoF
+/// mutations (`HC`, or `LC:` and its filters; `.` for other mutations) and
+/// the numbers the filters are based on (see [`crate::loftee::Assessment`]).
+/// If `loftee` filters low-confidence mutations, they are `Unknown` (and
+/// left out unless `include_unknown`), as in `enumerate`.
 pub fn write_possible_mutations<W: Write>(
     mut out: W,
     annotations: &[SeqAnnotation],
@@ -134,14 +168,17 @@ pub fn write_possible_mutations<W: Write>(
     include_unknown: bool,
     filter_plof: bool,
     probabilities: Option<&SiteProbabilities>,
+    loftee: Option<&Loftee>,
 ) -> Result<()> {
     let mut masked = 0usize;
+    let mut low_confidence = 0usize;
     for annotation in annotations {
         if let Some(id) = filter_for_id {
             if annotation.name != id {
                 continue;
             }
         }
+        let assessor = loftee.map(|l| l.transcript(annotation));
         let seq = match annotation_sequence(ref_genome, annotation, radius) {
             Ok(seq) => seq,
             Err(e) => {
@@ -158,6 +195,7 @@ pub fn write_possible_mutations<W: Write>(
         // skipped as a whole, so the probabilities still sum to `expect`.
         let mut lines: Vec<u8> = Vec::new();
         let mut annotation_masked = 0usize;
+        let mut annotation_low_confidence = 0usize;
         let result = for_each_possible_mutation(
             &seq,
             annotation,
@@ -175,6 +213,19 @@ pub fn write_possible_mutations<W: Write>(
                 };
                 let mut indel_rates = None;
                 for m in site.mutations {
+                    let assessment = assessor
+                        .as_ref()
+                        .and_then(|t| t.assess(site.genomic_position, m.mutation_type));
+                    let mutation_type = match loftee {
+                        Some(l) => l.counted_type(m.mutation_type, assessment.as_ref()),
+                        None => m.mutation_type,
+                    };
+                    if mutation_type != m.mutation_type {
+                        annotation_low_confidence += 1;
+                        if mutation_type == MutationType::Unknown && !include_unknown {
+                            continue; // as enumerate
+                        }
+                    }
                     let probability = match (probabilities, &point_rates) {
                         (Some(p), Some(rates)) => {
                             let rate = match m.alteration {
@@ -242,14 +293,21 @@ pub fn write_possible_mutations<W: Write>(
                         ref_base,
                         alt,
                         annotation.name,
-                        m.mutation_type,
+                        mutation_type,
                         site.seq_window
                     )?;
                     match probability {
-                        Some((p, Some(an), rate)) => writeln!(out, "\t{:e}\t{}\t{:e}", p, an, rate)?,
-                        Some((p, None, rate)) => writeln!(out, "\t{:e}\tNA\t{:e}", p, rate)?,
-                        None => writeln!(out)?,
+                        Some((p, Some(an), rate)) => write!(out, "\t{:e}\t{}\t{:e}", p, an, rate)?,
+                        Some((p, None, rate)) => write!(out, "\t{:e}\tNA\t{:e}", p, rate)?,
+                        None => {}
                     }
+                    if loftee.is_some() {
+                        match &assessment {
+                            Some(a) => write!(out, "\t{}\t{}", a.label(), a.info())?,
+                            None => write!(out, "\t.\t.")?,
+                        }
+                    }
+                    writeln!(out)?;
                 }
                 Ok(())
             },
@@ -258,6 +316,7 @@ pub fn write_possible_mutations<W: Write>(
             Ok(()) => {
                 out.write_all(&lines)?;
                 masked += annotation_masked;
+                low_confidence += annotation_low_confidence;
             }
             Err(e) => eprintln!("[WARNING] Skipping annotation {}: {:#}", annotation.name, e),
         }
@@ -269,6 +328,7 @@ pub fn write_possible_mutations<W: Write>(
             masked
         );
     }
+    report_low_confidence(low_confidence, include_unknown);
     Ok(())
 }
 

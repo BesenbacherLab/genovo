@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{App, Arg};
 
 use pattern_partition_prediction::{PaPaPred, PaPaPredIndel};
@@ -12,6 +12,7 @@ mod enumerate;
 mod error;
 mod expect;
 mod io;
+mod loftee;
 mod observed;
 mod sample;
 mod scaling;
@@ -23,7 +24,8 @@ const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 type Float = f32;
 type MutationType = mutexpect::MutationType;
 
-use crate::allele_numbers::{AlleleNumbers, NeededSites};
+use crate::allele_numbers::{AlleleNumbers, NeededSites, SiteValues};
+use crate::loftee::Loftee;
 use crate::scaling::{Calibration, SiteScaling};
 use crate::compare::compare_mutations;
 use crate::enumerate::enumerate_possible_mutations;
@@ -193,6 +195,56 @@ fn site_scaling(
     Ok(CELL.get_or_init(|| scaling))
 }
 
+/// LOFTEE's filters (`--loftee`, `--loftee-filter`), with the GERP++ scores
+/// of `--gerp`; `None` without these options. Read once.
+fn loftee_settings(
+    matches: &clap::ArgMatches,
+    regions: &Option<Vec<mutexpect::SeqAnnotation>>,
+) -> Result<Option<&'static Loftee>> {
+    static CELL: std::sync::OnceLock<Option<Loftee>> = std::sync::OnceLock::new();
+    if let Some(l) = CELL.get() {
+        return Ok(l.as_ref());
+    }
+    let filter = matches.occurrences_of("loftee-filter") > 0;
+    if !filter && matches.occurrences_of("loftee") == 0 {
+        if matches.value_of("gerp").is_some() {
+            eprintln!("[WARNING] --gerp is only used with --loftee or --loftee-filter");
+        }
+        return Ok(CELL.get_or_init(|| None).as_ref());
+    }
+    let cutoff: f64 = matches
+        .value_of("loftee-gerp-cutoff")
+        .expect("default value")
+        .parse()
+        .ok()
+        .filter(|x: &f64| x.is_finite())
+        .ok_or_else(|| anyhow::anyhow!("--loftee-gerp-cutoff must be a number"))?;
+    let gerp = match matches.value_of("gerp") {
+        Some(file) => {
+            let regions = require_initialization(regions, "--genomic-regions or --gff3")?;
+            let needed = NeededSites::from_annotations(regions, false);
+            let scores = SiteValues::read_from_file(file, &needed, "score", |x: &f32| x.is_finite())
+                .with_context(|| format!("reading GERP++ scores from {}", file))?;
+            eprintln!(
+                "[INFO] GERP++ scores for {} of {} needed sites read from {}",
+                scores.len(),
+                needed.len(),
+                file
+            );
+            Some(scores)
+        }
+        None => {
+            eprintln!(
+                "[WARNING] LOFTEE without --gerp: END_TRUNC (LoF variants near the end of the \
+                 coding sequence in poorly conserved sequence) is not applied"
+            );
+            None
+        }
+    };
+    let loftee = Loftee::new(gerp, cutoff, filter);
+    Ok(CELL.get_or_init(|| Some(loftee)).as_ref())
+}
+
 fn main() -> Result<()> {
     let app = App::new("genovo")
         .version(VERSION)
@@ -212,6 +264,9 @@ fn main() -> Result<()> {
                      each mutation as in enumerate (with --scaling-factor or --calibration and\n\
                      --allele-numbers), the allele number of its site (NA without --allele-numbers)\n\
                      and the rate of the model; mutations that enumerate leaves out are not written.\n\
+                     With --loftee or --loftee-filter, two more columns follow: LOFTEE's label of putative\n\
+                     loss-of-function mutations (HC, or LC: and the filters; . for other mutations) and the\n\
+                     numbers the filters are based on (classify adds the same as columns loftee and loftee_info).\n\
                      \n\
                      Progress messages are written to STDERR." )
         .arg(Arg::with_name("action")
@@ -371,6 +426,26 @@ fn main() -> Result<()> {
         .arg(Arg::with_name("filter-plof")
              .long("--filter-plof")
              .help("filter putative LoF variants. (50 bp rule)"))
+        .arg(Arg::with_name("loftee")
+             .long("loftee")
+             .conflicts_with("filter-plof")
+             .help("Label putative loss-of-function mutations (nonsense, frameshift, splice site) high (HC) or low confidence (LC) with the filters of LOFTEE that gnomAD v4.1 applies: END_TRUNC (needs --gerp), SMALL_INTRON, 5UTR_SPLICE and 3UTR_SPLICE. possible_mutations and classify write the labels; the mutation types are unchanged"))
+        .arg(Arg::with_name("loftee-filter")
+             .long("loftee-filter")
+             .conflicts_with("filter-plof")
+             .help("As --loftee, and count low-confidence (LC) LoF mutations as Unknown in enumerate, possible_mutations and classify, i.e. only high-confidence LoF mutations as in gnomAD's pLoF counts"))
+        .arg(Arg::with_name("gerp")
+             .long("gerp")
+             .value_name("FILE")
+             .help("GERP++ rejected-substitution scores per site for LOFTEE's END_TRUNC filter (tab-separated 'chrom pos score' or 'chrom:pos score', 1-based, sorted; only the sites of the exons are read), e.g. from LOFTEE's gerp_conservation_scores.homo_sapiens.GRCh38.bw")
+             .takes_value(true))
+        .arg(Arg::with_name("loftee-gerp-cutoff")
+             .long("loftee-gerp-cutoff")
+             .value_name("NUMBER")
+             .help("END_TRUNC: LoF mutations near the end of the coding sequence are low confidence if the GERP++ scores from the mutation to the stop codon sum to at most this. 0 as in gnomAD v4.1.1; LOFTEE's default is -58")
+             .default_value("0")
+             .allow_hyphen_values(true)
+             .takes_value(true))
         .arg(Arg::with_name("alpha")
              .long("--alpha")
              .value_name("FLOAT")
@@ -525,6 +600,7 @@ fn main() -> Result<()> {
                 include_intronic,
                 include_unknown,
                 filter_plof,
+                loftee_settings(&matches, &regions)?,
             )?;
 
             if let Some(possible_mutations_file) = matches.value_of("possible-mutations") {
@@ -567,6 +643,7 @@ fn main() -> Result<()> {
             include_unknown,
             filter_plof,
             probabilities.as_ref(),
+            loftee_settings(&matches, &regions)?,
         )?;
         return Ok(());
     };
@@ -638,6 +715,7 @@ fn main() -> Result<()> {
                 id,
                 filter_plof,
                 site_scaling(&matches, &regions, include_intronic, scaling_factor)?,
+                loftee_settings(&matches, &regions)?,
             )?;
 
             if let Some(classified_mutations_file) = matches.value_of("classified-mutations") {
